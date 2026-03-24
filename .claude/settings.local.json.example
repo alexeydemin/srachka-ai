@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/you/projects/srachka_ai/hooks/review_with_codex.py"
+          }
+        ]
+      }
+    ]
+  }
+}

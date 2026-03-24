@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "issues", "requested_changes", "question_for_user"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["approved", "revise", "overengineered", "ask_user"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "message"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "requested_changes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "question_for_user": {
+      "type": ["string", "null"]
+    }
+  }
+}
