@@ -1,100 +1,65 @@
-# srachka_ai
+# srachka
 
-`srachka_ai` is a tiny local orchestrator for a two model workflow:
+AI debate orchestrator — Claude vs Codex.
 
-1. Claude proposes a practical implementation plan.
-2. Codex critiques the plan.
-3. Claude revises until the plan is approved, simplified, or escalated to the human.
-4. During implementation, a Claude Code `Stop` hook can ask Codex to review the current diff and block completion when the step is not ready.
+Claude proposes, Codex critiques. They argue until the plan is good enough, then Claude implements step by step while Codex reviews every diff.
 
-This repo is intentionally small. It uses only the Python standard library and shells out to your existing `claude` and `codex` CLIs.
-
-## Why this shape
-
-This project leans on two current capabilities:
-
-`codex exec` supports machine readable automation, including JSONL output and `--output-schema` for structured final responses. Claude Code supports non interactive runs with `claude -p`, and `Stop` hooks can block stopping with `decision: "block"` or with exit code `2`.
-
-## Folder layout
-
-```text
-srachka_ai/
-  README.md
-  config.example.json
-  .gitignore
-  .claude/
-    settings.local.json.example
-  examples/
-    TASK.md
-  hooks/
-    review_with_codex.py
-  schemas/
-    plan.schema.json
-    plan_review.schema.json
-    diff_review.schema.json
-  srachka_ai/
-    __init__.py
-    cli.py
-    config.py
-    models.py
-    orchestrator.py
-    paths.py
-    prompts.py
-    providers.py
-    shell.py
-    state.py
-    utils.py
-```
-
-## Prerequisites
-
-Install and authenticate both CLIs.
+## Install
 
 ```bash
-claude --version
-codex --version
+pipx install -e ~/personal/ai_srachka
 ```
+
+This makes `srachka` available globally. Works from any directory.
 
 ## Quick start
 
-Copy config and adjust commands only if your local setup is unusual.
-
 ```bash
-cd ~/projects/srachka_ai
-cp config.example.json config.json
-python3 -m srachka_ai.cli plan --task-file examples/TASK.md --work-repo ~/code/my_app
+# Go to the repo you want to work on
+cd ~/projects/my-app
+
+# Create a plan (Claude proposes, Codex reviews, they debate)
+srachka plan --task-file ~/tasks/feature.md
+
+# See current step
+srachka show-step
+
+# After implementing a step, ask Codex to review the diff
+srachka review-diff
+
+# Move to next step
+srachka next-step
+
+# Check auth status for both CLIs
+srachka doctor
 ```
 
-That creates a run directory under `runs/` and writes:
+## How it works
 
-- `state.json`, orchestrator state for the latest run
-- `plan.json`, approved or last proposed plan
-- `review.jsonl`, all reviewer rounds
-- `implementation_brief.md`, text you can paste into Claude Code
+1. You write a task in a markdown file
+2. `srachka plan` — Claude generates a plan, Codex reviews it. They go back and forth (up to 4 rounds) until approved
+3. For each step: Claude implements, Codex reviews the diff
+4. `srachka review-diff` — Codex checks if the current step is done correctly
+5. `srachka next-step` — advance to the next step
 
-See the current step:
+The current directory is your work repo. `srachka` config, schemas, runs, and logs live in the srachka install directory, not in your project.
 
-```bash
-python3 -m srachka_ai.cli show-step
+## Intended workflow
+
+The user (or Claude as orchestrator) runs srachka commands step by step:
+
 ```
-
-Advance after you accept a step:
-
-```bash
-python3 -m srachka_ai.cli next-step
+srachka plan --task-file task.md    # debate the plan
+srachka show-step                    # see what to do
+# ... implement the step ...
+srachka review-diff                  # Codex reviews
+srachka next-step                    # move on
+# ... repeat ...
 ```
-
-Manually ask Codex to review the current diff from the active work repo:
-
-```bash
-python3 -m srachka_ai.cli review-diff
-```
-
-Or let Claude Code do it automatically through the hook.
 
 ## Claude Code hook
 
-Create a hook entry in the target repository. The command should point to the absolute path of this project's hook script:
+You can also automate diff reviews via a Claude Code Stop hook. Add to the target repo's `.claude/settings.local.json`:
 
 ```json
 {
@@ -104,7 +69,7 @@ Create a hook entry in the target repository. The command should point to the ab
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/you/projects/srachka_ai/hooks/review_with_codex.py"
+            "command": "/path/to/ai_srachka/hooks/review_with_codex.py"
           }
         ]
       }
@@ -113,34 +78,15 @@ Create a hook entry in the target repository. The command should point to the ab
 }
 ```
 
-Put that into the target repo's `.claude/settings.local.json`.
-
-Then start Claude Code in the target repo and tell it to follow the generated `runs/<run_id>/implementation_brief.md` step by step.
-
-When Claude tries to stop, the Stop hook will:
-
-- read the active `state.json`
-- inspect `git diff`
-- ask Codex whether the current step is done well enough
-- allow stop or block it with a reason
-
-## Suggested workflow
-
-1. Write the task into `examples/TASK.md`, or any markdown file.
-2. Run plan.
-3. Open Claude Code in the target repo.
-4. Paste the generated implementation brief.
-5. Let Claude work on step 1.
-6. If the hook blocks, Claude keeps going.
-7. Once you are happy, run `next-step`.
+When Claude tries to stop, the hook asks Codex to review the diff and blocks if the step isn't done.
 
 ## Config
 
-`config.json` supports these fields:
+`config.json` in the srachka install directory:
 
 ```json
 {
-  "claude_command": ["claude", "-p"],
+  "claude_command": ["claude", "--model", "claude-opus-4-6", "--effort", "max", "-p"],
   "codex_command": ["codex", "--ask-for-approval", "never", "exec"],
   "max_plan_rounds": 4,
   "max_step_fix_rounds": 2,
@@ -149,18 +95,16 @@ When Claude tries to stop, the Stop hook will:
 }
 ```
 
-## Notes
+## Prerequisites
 
-This is a practical first version, not a framework. It is intentionally opinionated:
+```bash
+claude --version   # Claude Code CLI
+codex --version    # OpenAI Codex CLI
+```
 
-- Claude owns planning and implementation.
-- Codex owns critique and merge readiness.
-- The human decides product ambiguities.
-- Over engineering is treated as a first class rejection reason.
+## Design
 
-## Nice next upgrades
-
-- auto advance step when diff review is accepted
-- richer state per step, including expected files and test commands
-- Slack or terminal notifications when human input is needed
-- Agents SDK or MCP based multi turn orchestration later, after this loop proves useful
+- Claude owns planning and implementation
+- Codex owns critique and review
+- The human decides product ambiguities
+- Over-engineering is a first-class rejection reason
