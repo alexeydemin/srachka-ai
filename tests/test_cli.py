@@ -64,5 +64,17 @@ class CliTests(unittest.TestCase):
             self.assertIn(str(suggestion), stderr.getvalue())
 
 
+    def test_init_prints_complete_prompt(self) -> None:
+        stdout = io.StringIO()
+        with mock.patch.object(sys, "argv", ["srachka_ai", "init"]):
+            with unittest.mock.patch("sys.stdout", stdout):
+                exit_code = cli.main()
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        prompt_path = Path(cli.__file__).parent / "init_prompt.md"
+        expected = prompt_path.read_text(encoding="utf-8")
+        self.assertEqual(output.strip(), expected.strip())
+
+
 if __name__ == "__main__":
     unittest.main()

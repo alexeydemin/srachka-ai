@@ -70,6 +70,7 @@ class DiffReview:
     issues: list[Issue]
     required_fixes: list[str]
     done_enough: bool
+    question_for_user: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "DiffReview":
@@ -79,6 +80,7 @@ class DiffReview:
             issues=[Issue.from_dict(x) for x in data.get("issues", [])],
             required_fixes=[str(x) for x in data.get("required_fixes", [])],
             done_enough=bool(data.get("done_enough", False)),
+            question_for_user=(None if data.get("question_for_user") is None else str(data["question_for_user"])),
         )
 
     def to_dict(self) -> dict[str, Any]:

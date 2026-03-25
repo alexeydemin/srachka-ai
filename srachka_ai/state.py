@@ -10,6 +10,7 @@ import json
 STATE_FILE_NAME = "state.json"
 PLAN_FILE_NAME = "plan.json"
 REVIEW_HISTORY_FILE_NAME = "review.jsonl"
+STEP_REVIEWS_FILE_NAME = "step_reviews.jsonl"
 IMPLEMENTATION_BRIEF_NAME = "implementation_brief.md"
 LATEST_POINTER_NAME = "latest"
 

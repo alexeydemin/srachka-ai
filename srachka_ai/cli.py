@@ -4,6 +4,8 @@ import argparse
 import base64
 import difflib
 import json
+import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,15 +34,21 @@ def _build_orchestrator(work_repo: Path | None = None) -> tuple[Path, Orchestrat
 
 
 def _git_diff(cwd: Path) -> str:
+    subprocess.run(
+        ["git", "add", "-A"],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+    )
     completed = subprocess.run(
-        ["git", "diff", "--no-ext-diff", "--unified=1"],
+        ["git", "diff", "--cached", "--no-ext-diff", "--unified=1"],
         cwd=str(cwd),
         text=True,
         capture_output=True,
     )
     if completed.returncode != 0:
         raise RuntimeError(f"git diff failed:\n{completed.stderr}")
-    return completed.stdout.strip() or "No diff detected."
+    return completed.stdout.strip()
 
 
 def _format_step_progress(current_step_index: int, total_steps: int) -> str:
@@ -149,15 +157,60 @@ def cmd_review_diff(args: argparse.Namespace) -> int:
     run_dir = resolve_latest_run_dir(runs_root)
     state = read_run_state(run_dir)
     _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
+    orchestrator.attach_log(state.run_id)
 
     if args.stdin_diff:
-        diff_text = sys.stdin.read().strip() or "No diff detected."
+        diff_text = sys.stdin.read().strip()
     else:
         diff_text = _git_diff(Path(state.work_repo))
+
+    if not diff_text:
+        diff_text = "No changes detected."
 
     review = orchestrator.review_diff(state, diff_text)
     print(json.dumps(review.to_dict(), ensure_ascii=False, indent=2))
     return 0 if review.status == "accept" else 2
+
+
+def cmd_do_step(args: argparse.Namespace) -> int:
+    try:
+        _, _, runs_root = _build_orchestrator()
+        run_dir = resolve_latest_run_dir(runs_root)
+        state = read_run_state(run_dir)
+        _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
+        orchestrator.attach_log(state.run_id)
+
+        if state.current_step is None:
+            print("All steps complete.")
+            return 0
+
+        print(f"Step {_format_step_progress(state.current_step_index, len(state.plan.steps))}: {state.current_step}")
+        review = orchestrator.do_step(state, run_dir)
+
+        if review is None:
+            print("All steps complete.")
+            return 0
+
+        if review.status == "accept":
+            print(f"Accepted: {review.summary}")
+            state.current_step_index = min(state.current_step_index + 1, len(state.plan.steps))
+            save_run_state(run_dir, state, implementation_brief(state))
+            print(f"Advanced to step: {_format_step_progress(state.current_step_index, len(state.plan.steps))}")
+            return 0
+
+        if review.status == "ask_user":
+            question = review.question_for_user or review.summary
+            print(f"Human input needed: {question}", file=sys.stderr)
+            return 2
+
+        # Final reject
+        print(f"Rejected: {review.summary}", file=sys.stderr)
+        for issue in review.issues:
+            print(f"  [{issue.severity}] {issue.message}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _decode_jwt_exp(token: str | None) -> str | None:
@@ -175,6 +228,62 @@ def _decode_jwt_exp(token: str | None) -> str | None:
     if not isinstance(exp, int):
         return None
     return datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+
+
+BANNER = """
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                                            ┃
+  ┃   ╔═╗╦═╗╔═╗╔═╗╦ ╦╦╔═╔═╗                  ┃
+  ┃   ╚═╗╠╦╝╠═╣║  ╠═╣╠╩╗╠═╣                  ┃
+  ┃   ╚═╝╩╚═╩ ╩╚═╝╩ ╩╩ ╩╩ ╩                  ┃
+  ┃                                            ┃
+  ┃   Claude proposes ── debate ── Codex bites ┃
+  ┃                                            ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+"""
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    print(BANNER, file=sys.stderr)
+    prompt_path = Path(__file__).parent / "init_prompt.md"
+    print(prompt_path.read_text(encoding="utf-8"))
+    return 0
+
+
+def cmd_logs(args: argparse.Namespace) -> int:
+    app_root = project_root()
+    config = load_config(app_root)
+    logs_root = app_root / config.logs_dir
+
+    if not logs_root.is_dir():
+        print(f"No logs directory found: {logs_root}", file=sys.stderr)
+        return 1
+
+    if args.list:
+        log_files = sorted(logs_root.glob("*.log"))
+        if not log_files:
+            print("No log files found.")
+            return 0
+        for f in log_files:
+            size_kb = f.stat().st_size / 1024
+            print(f"  {f.stem}  ({size_kb:.1f} KB)")
+        return 0
+
+    if args.run:
+        log_path = logs_root / f"{args.run}.log"
+        if not log_path.is_file():
+            print(f"Log file not found: {log_path}", file=sys.stderr)
+            return 1
+    else:
+        log_files = sorted(logs_root.glob("*.log"))
+        if not log_files:
+            print("No log files found.", file=sys.stderr)
+            return 1
+        log_path = log_files[-1]
+
+    print(f"Tailing {log_path.name} ...", file=sys.stderr)
+    os.execvp("tail", ["tail", "-f", str(log_path)])
+    return 0  # unreachable after execvp
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -210,7 +319,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="srachka_ai")
+    parser = argparse.ArgumentParser(prog="srachka")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_plan = sub.add_parser("plan", help="Run Claude and Codex plan debate")
@@ -227,6 +336,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_review = sub.add_parser("review-diff", help="Ask Codex to review current diff")
     p_review.add_argument("--stdin-diff", action="store_true", help="Read diff from stdin instead of running git diff")
     p_review.set_defaults(func=cmd_review_diff)
+
+    p_do = sub.add_parser("do-step", help="Implement current step with Claude, review with Codex")
+    p_do.set_defaults(func=cmd_do_step)
+
+    p_init = sub.add_parser("init", help="Print the orchestrator prompt for Claude")
+    p_init.set_defaults(func=cmd_init)
+
+    p_logs = sub.add_parser("logs", help="View debate log files")
+    p_logs.add_argument("--list", action="store_true", help="List all log files")
+    p_logs.add_argument("--run", help="Show log for a specific run ID")
+    p_logs.set_defaults(func=cmd_logs)
 
     p_doctor = sub.add_parser("doctor", help="Show Claude/Codex auth diagnostics")
     p_doctor.set_defaults(func=cmd_doctor)

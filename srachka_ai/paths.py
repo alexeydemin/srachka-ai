@@ -8,7 +8,7 @@ def project_root() -> Path:
 
 
 def schema_dir(root: Path) -> Path:
-    return root / "schemas"
+    return root / ".srachka" / "schemas"
 
 
 def runs_dir(root: Path, relative_name: str) -> Path:

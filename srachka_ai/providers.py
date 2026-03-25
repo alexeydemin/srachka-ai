@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import AppConfig
-from .shell import require_success, run_command
+from .shell import require_success, run_command, run_command_streaming
 from .utils import extract_json
 
 
@@ -16,6 +18,12 @@ CLAUDE_AUTH_ENV_VARS = (
     "ANTHROPIC_BEARER_TOKEN",
     "CLAUDE_CODE_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
+)
+
+# Env vars that prevent nested Claude Code sessions.
+CLAUDE_NESTING_ENV_VARS = (
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
 )
 
 CODEX_AUTH_ENV_VARS = (
@@ -34,6 +42,22 @@ CODEX_AUTH_ENV_VARS = (
 )
 
 
+@dataclass
+class ProviderMeta:
+    provider: str = ""
+    duration_s: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+@dataclass
+class ProviderResult:
+    data: dict = field(default_factory=dict)
+    meta: ProviderMeta = field(default_factory=ProviderMeta)
+    raw_response: str = ""
+
+
 def common_cli_env() -> dict[str, str]:
     home = os.environ.get("HOME", str(USER_HOME))
     xdg_config_home = os.environ.get("XDG_CONFIG_HOME", str(Path(home) / ".config"))
@@ -45,7 +69,10 @@ def common_cli_env() -> dict[str, str]:
 
 def claude_env_overrides() -> dict[str, str]:
     env = common_cli_env()
-    env["CLAUDE_CONFIG_DIR"] = os.environ.get("CLAUDE_CONFIG_DIR", str(Path(env["HOME"]) / ".claude"))
+    # Only forward CLAUDE_CONFIG_DIR if it was explicitly set by the user.
+    # Setting it to the default value (~/.claude) breaks Claude's own auth lookup.
+    if "CLAUDE_CONFIG_DIR" in os.environ:
+        env["CLAUDE_CONFIG_DIR"] = os.environ["CLAUDE_CONFIG_DIR"]
     return env
 
 
@@ -60,18 +87,45 @@ class ClaudeProvider:
         self.config = config
         self.work_root = work_root
 
-    def ask_json(self, prompt: str) -> dict:
+    def ask_json(self, prompt: str, *, timeout_s: int | None = None) -> ProviderResult:
         command = [*self.config.claude_command, prompt]
+        t0 = time.monotonic()
         result = require_success(
-            run_command(
+            run_command_streaming(
                 command,
                 cwd=self.work_root,
                 env_overrides=claude_env_overrides(),
-                env_remove=CLAUDE_AUTH_ENV_VARS,
+                env_remove=(*CLAUDE_AUTH_ENV_VARS, *CLAUDE_NESTING_ENV_VARS),
+                line_prefix="         ",
+                timeout_s=timeout_s,
             ),
             command,
         )
-        return extract_json(result.stdout)
+        elapsed = time.monotonic() - t0
+        meta = ProviderMeta(provider="Claude", duration_s=elapsed)
+        data = extract_json(result.stdout)
+        return ProviderResult(data=data, meta=meta, raw_response=result.stdout)
+
+    def implement(self, prompt: str, *, timeout_s: int | None = None) -> tuple[ProviderMeta, str]:
+        """Run Claude for freeform implementation (file edits, not JSON).
+
+        Returns (meta, response_text) tuple.
+        """
+        command = [*self.config.claude_implement_command, prompt]
+        t0 = time.monotonic()
+        result = require_success(
+            run_command_streaming(
+                command,
+                cwd=self.work_root,
+                env_overrides=claude_env_overrides(),
+                env_remove=(*CLAUDE_AUTH_ENV_VARS, *CLAUDE_NESTING_ENV_VARS),
+                line_prefix="         ",
+                timeout_s=timeout_s,
+            ),
+            command,
+        )
+        elapsed = time.monotonic() - t0
+        return ProviderMeta(provider="Claude", duration_s=elapsed), result.stdout
 
 
 class CodexProvider:
@@ -80,7 +134,7 @@ class CodexProvider:
         self.work_root = work_root
         self.schema_dir = schema_dir
 
-    def ask_json(self, prompt: str, schema_name: str) -> dict:
+    def ask_json(self, prompt: str, schema_name: str, *, timeout_s: int | None = None) -> ProviderResult:
         schema_path = self.schema_dir / schema_name
         command = [
             *self.config.codex_command,
@@ -88,14 +142,20 @@ class CodexProvider:
             str(schema_path),
             prompt,
         ]
+        t0 = time.monotonic()
         # Prefer Codex's persisted login over auth variables inherited from hooks or IDEs.
         result = require_success(
-            run_command(
+            run_command_streaming(
                 command,
                 cwd=self.work_root,
                 env_overrides=codex_env_overrides(),
                 env_remove=CODEX_AUTH_ENV_VARS,
+                line_prefix="         ",
+                timeout_s=timeout_s,
             ),
             command,
         )
-        return extract_json(result.stdout)
+        elapsed = time.monotonic() - t0
+        meta = ProviderMeta(provider="Codex", duration_s=elapsed)
+        data = extract_json(result.stdout)
+        return ProviderResult(data=data, meta=meta, raw_response=result.stdout)
