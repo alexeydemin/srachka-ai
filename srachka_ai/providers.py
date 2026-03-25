@@ -87,7 +87,7 @@ class ClaudeProvider:
         self.config = config
         self.work_root = work_root
 
-    def ask_json(self, prompt: str) -> ProviderResult:
+    def ask_json(self, prompt: str, *, timeout_s: int | None = None) -> ProviderResult:
         command = [*self.config.claude_command, prompt]
         t0 = time.monotonic()
         result = require_success(
@@ -97,6 +97,7 @@ class ClaudeProvider:
                 env_overrides=claude_env_overrides(),
                 env_remove=(*CLAUDE_AUTH_ENV_VARS, *CLAUDE_NESTING_ENV_VARS),
                 line_prefix="         ",
+                timeout_s=timeout_s,
             ),
             command,
         )
@@ -105,7 +106,7 @@ class ClaudeProvider:
         data = extract_json(result.stdout)
         return ProviderResult(data=data, meta=meta, raw_response=result.stdout)
 
-    def implement(self, prompt: str) -> tuple[ProviderMeta, str]:
+    def implement(self, prompt: str, *, timeout_s: int | None = None) -> tuple[ProviderMeta, str]:
         """Run Claude for freeform implementation (file edits, not JSON).
 
         Returns (meta, response_text) tuple.
@@ -119,6 +120,7 @@ class ClaudeProvider:
                 env_overrides=claude_env_overrides(),
                 env_remove=(*CLAUDE_AUTH_ENV_VARS, *CLAUDE_NESTING_ENV_VARS),
                 line_prefix="         ",
+                timeout_s=timeout_s,
             ),
             command,
         )
@@ -132,7 +134,7 @@ class CodexProvider:
         self.work_root = work_root
         self.schema_dir = schema_dir
 
-    def ask_json(self, prompt: str, schema_name: str) -> ProviderResult:
+    def ask_json(self, prompt: str, schema_name: str, *, timeout_s: int | None = None) -> ProviderResult:
         schema_path = self.schema_dir / schema_name
         command = [
             *self.config.codex_command,
@@ -149,6 +151,7 @@ class CodexProvider:
                 env_overrides=codex_env_overrides(),
                 env_remove=CODEX_AUTH_ENV_VARS,
                 line_prefix="         ",
+                timeout_s=timeout_s,
             ),
             command,
         )
