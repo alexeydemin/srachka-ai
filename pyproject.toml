@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "srachka-ai"
+version = "0.1.0"
+description = "AI debate orchestrator — Claude vs Codex"
+requires-python = ">=3.10"
+
+[project.scripts]
+srachka = "srachka_ai.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["srachka_ai*"]

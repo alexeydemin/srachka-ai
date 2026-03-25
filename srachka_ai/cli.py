@@ -4,6 +4,7 @@ import argparse
 import base64
 import difflib
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -210,7 +211,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="srachka_ai")
+    parser = argparse.ArgumentParser(prog="srachka")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_plan = sub.add_parser("plan", help="Run Claude and Codex plan debate")
