@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+*.egg-info/
 config.json
 logs/*.log
 runs/*

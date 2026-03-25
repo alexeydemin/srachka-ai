@@ -76,6 +76,23 @@ class Orchestrator:
         self.claude = ClaudeProvider(config, work_root)
         self.codex = CodexProvider(config, work_root, schema_dir)
 
+    def _ensure_clean_repo(self) -> None:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(self.work_root),
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"git status failed (is {self.work_root} a git repo?):\n{result.stderr.strip()}"
+            )
+        if result.stdout.strip():
+            raise RuntimeError(
+                "Work repo has uncommitted changes. "
+                "Run 'git stash -u' or commit first before using srachka."
+            )
+
     def create_run_dir(self) -> Path:
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         run_dir = self.runs_root / run_id
@@ -155,6 +172,7 @@ class Orchestrator:
             ) from fallback_exc
 
     def debate_plan(self, task: str) -> RunState:
+        self._ensure_clean_repo()
         run_dir = self.create_run_dir()
         review_path = run_dir / REVIEW_HISTORY_FILE_NAME
         previous_review: PlanReview | None = None
@@ -212,8 +230,14 @@ class Orchestrator:
         return DiffReview.from_dict(raw)
 
     def _raw_git_diff(self) -> str:
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(self.work_root),
+            check=True,
+            capture_output=True,
+        )
         completed = subprocess.run(
-            ["git", "diff", "--no-ext-diff", "--unified=1"],
+            ["git", "diff", "--cached", "--no-ext-diff", "--unified=1"],
             cwd=str(self.work_root),
             text=True,
             capture_output=True,
@@ -239,6 +263,7 @@ class Orchestrator:
     def do_step(self, state: RunState, run_dir: Path) -> DiffReview | None:
         if state.current_step is None:
             return None
+        self._ensure_clean_repo()
 
         step_reviews_path = run_dir / STEP_REVIEWS_FILE_NAME
         step_index = state.current_step_index
@@ -291,4 +316,34 @@ class Orchestrator:
 
             _log(f"Status: reject — {len([i for i in review.issues if i.severity in ('high', 'medium')])} blocking issues")
 
+        if final_review is not None and final_review.status == "accept":
+            self._auto_commit(state)
+
         return final_review
+
+    def _auto_commit(self, state: RunState) -> None:
+        step_num = state.current_step_index + 1
+        description = (state.current_step or "unknown step")[:70].replace("\n", " ")
+        message = f"Step {step_num}: {description}"
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(self.work_root),
+            check=True,
+            capture_output=True,
+        )
+        result = subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=str(self.work_root),
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            combined = f"{result.stdout}\n{result.stderr}".lower()
+            if "nothing to commit" in combined:
+                _log("Warning: nothing to commit after accept")
+            else:
+                raise RuntimeError(
+                    f"git commit failed after accepted step:\n{result.stderr.strip()}"
+                )
+        else:
+            _log(f"Committed: {message}")

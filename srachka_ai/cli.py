@@ -33,8 +33,14 @@ def _build_orchestrator(work_repo: Path | None = None) -> tuple[Path, Orchestrat
 
 
 def _git_diff(cwd: Path) -> str:
+    subprocess.run(
+        ["git", "add", "-A"],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+    )
     completed = subprocess.run(
-        ["git", "diff", "--no-ext-diff", "--unified=1"],
+        ["git", "diff", "--cached", "--no-ext-diff", "--unified=1"],
         cwd=str(cwd),
         text=True,
         capture_output=True,
