@@ -9,7 +9,7 @@ from .config import AppConfig
 from .models import DiffReview, Issue, PlanDraft, PlanReview, RunState
 from .prompts import diff_review_prompt, fix_prompt, implementation_brief, plan_prompt, review_prompt
 from .providers import ClaudeProvider, CodexProvider, ProviderMeta, ProviderResult
-from .shell import CommandError
+from .shell import CommandError, CommandTimeout
 from .state import REVIEW_HISTORY_FILE_NAME, STEP_REVIEWS_FILE_NAME, point_latest, save_run_state
 from .utils import append_jsonl
 
@@ -55,6 +55,8 @@ AUTH_ERROR_MARKERS = (
 
 
 def _is_auth_failure(exc: Exception) -> bool:
+    if isinstance(exc, CommandTimeout):
+        return False
     message = str(exc).lower()
     return any(marker in message for marker in AUTH_ERROR_MARKERS)
 
@@ -122,7 +124,7 @@ class Orchestrator:
         primary_error: CommandError | None = None
         _log("Claude  generating plan...")
         try:
-            pr = self.claude.ask_json(prompt)
+            pr = self.claude.ask_json(prompt, timeout_s=self.config.provider_timeout_s)
             _log(f"Claude  done ({_meta_str(pr.meta)})")
             self._flog(f"=== PLAN RESPONSE (Claude, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
@@ -138,7 +140,7 @@ class Orchestrator:
         self._flog("Claude auth failed, falling back to Codex for plan")
         self._flog(f"=== ASK PLAN fallback (prompt) ===\n{prompt}")
         try:
-            pr = self.codex.ask_json(prompt, "plan.schema.json")
+            pr = self.codex.ask_json(prompt, "plan.schema.json", timeout_s=self.config.provider_timeout_s)
             _log(f"Codex   done ({_meta_str(pr.meta)})")
             self._flog(f"=== PLAN RESPONSE (Codex fallback, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
@@ -156,7 +158,7 @@ class Orchestrator:
         primary_error: CommandError | None = None
         _log("Codex   reviewing plan...")
         try:
-            pr = self.codex.ask_json(prompt, "plan_review.schema.json")
+            pr = self.codex.ask_json(prompt, "plan_review.schema.json", timeout_s=self.config.provider_timeout_s)
             _log(f"Codex   done ({_meta_str(pr.meta)})")
             self._flog(f"=== PLAN REVIEW RESPONSE (Codex, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
@@ -172,7 +174,7 @@ class Orchestrator:
         self._flog("Codex auth failed, falling back to Claude for plan review")
         self._flog(f"=== REVIEW PLAN fallback (prompt) ===\n{prompt}")
         try:
-            pr = self.claude.ask_json(prompt)
+            pr = self.claude.ask_json(prompt, timeout_s=self.config.provider_timeout_s)
             _log(f"Claude  done ({_meta_str(pr.meta)})")
             self._flog(f"=== PLAN REVIEW RESPONSE (Claude fallback, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
@@ -190,7 +192,7 @@ class Orchestrator:
         primary_error: CommandError | None = None
         _log("Codex   reviewing diff...")
         try:
-            pr = self.codex.ask_json(prompt, "diff_review.schema.json")
+            pr = self.codex.ask_json(prompt, "diff_review.schema.json", timeout_s=self.config.provider_timeout_s)
             _log(f"Codex   done ({_meta_str(pr.meta)})")
             self._flog(f"=== DIFF REVIEW RESPONSE (Codex, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
@@ -206,12 +208,14 @@ class Orchestrator:
         self._flog("Codex auth failed, falling back to Claude for diff review")
         self._flog(f"=== REVIEW DIFF fallback (prompt) ===\n{prompt}")
         try:
-            pr = self.claude.ask_json(prompt)
+            pr = self.claude.ask_json(prompt, timeout_s=self.config.provider_timeout_s)
             _log(f"Claude  done ({_meta_str(pr.meta)})")
             self._flog(f"=== DIFF REVIEW RESPONSE (Claude fallback, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
         except (CommandError, Exception) as fallback_exc:
             self._flog(f"Diff review failed completely.\nCodex: {primary_error}\nClaude: {fallback_exc}")
+            if isinstance(fallback_exc, CommandTimeout):
+                raise
             raise RuntimeError(
                 "Diff review failed. Codex and Claude were both unavailable for review.\n\n"
                 f"Codex error:\n{primary_error}\n\n"
@@ -341,30 +345,48 @@ class Orchestrator:
                 prompt = fix_prompt(state, final_review)
             self._flog(f"=== IMPLEMENTATION PROMPT ===\n{prompt}")
             _log("Claude  implementing...")
+
             try:
-                meta, response_text = self.claude.implement(prompt)
-            except CommandError as exc:
-                self._flog(f"Claude implement error:\n{exc}")
-                raise
-            _log(f"Claude  done ({_meta_str(meta)})")
-            self._flog(f"=== IMPLEMENTATION RESPONSE (Claude, {_meta_str(meta)}) ===\n{response_text}")
+                try:
+                    meta, response_text = self.claude.implement(prompt, timeout_s=self.config.provider_timeout_s)
+                except CommandError as exc:
+                    self._flog(f"Claude implement error:\n{exc}")
+                    raise
+                _log(f"Claude  done ({_meta_str(meta)})")
+                self._flog(f"=== IMPLEMENTATION RESPONSE (Claude, {_meta_str(meta)}) ===\n{response_text}")
 
-            # Get diff
-            diff_text = self._raw_git_diff()
+                # Get diff
+                diff_text = self._raw_git_diff()
 
-            if not diff_text:
-                _log("Warning: empty diff — no changes produced")
-                self._flog("Warning: empty diff — no changes produced")
-                final_review = self._synthetic_empty_reject()
+                if not diff_text:
+                    _log("Warning: empty diff — no changes produced")
+                    self._flog("Warning: empty diff — no changes produced")
+                    final_review = self._synthetic_empty_reject()
+                    append_jsonl(step_reviews_path, {
+                        "type": "step_review", "step_index": step_index,
+                        "round": round_index, "review": final_review.to_dict(),
+                    })
+                    continue
+
+                # Codex reviews
+                review = DiffReview.from_dict(self._review_diff(state, diff_text))
+                final_review = review
+
+            except CommandTimeout as exc:
+                _log(f"Timeout: provider timed out after {exc.elapsed_s:.0f}s")
+                self._flog(f"Step {step_index + 1} attempt {round_index}: CommandTimeout after {exc.elapsed_s:.0f}s")
+                final_review = DiffReview(
+                    status="reject",
+                    summary=f"Provider timed out after {exc.elapsed_s:.0f}s (limit {exc.timeout_s}s)",
+                    issues=[Issue(severity="high", message=f"Provider timed out after {exc.elapsed_s:.0f}s")],
+                    required_fixes=["Retry — the provider did not respond in time."],
+                    done_enough=False,
+                )
                 append_jsonl(step_reviews_path, {
                     "type": "step_review", "step_index": step_index,
                     "round": round_index, "review": final_review.to_dict(),
                 })
                 continue
-
-            # Codex reviews
-            review = DiffReview.from_dict(self._review_diff(state, diff_text))
-            final_review = review
 
             append_jsonl(step_reviews_path, {
                 "type": "step_review", "step_index": step_index,
