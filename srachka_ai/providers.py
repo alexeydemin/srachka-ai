@@ -104,6 +104,23 @@ class ClaudeProvider:
         data = extract_json(result.stdout)
         return ProviderResult(data=data, meta=meta)
 
+    def implement(self, prompt: str) -> ProviderMeta:
+        """Run Claude for freeform implementation (file edits, not JSON)."""
+        command = [*self.config.claude_command, prompt]
+        t0 = time.monotonic()
+        require_success(
+            run_command_streaming(
+                command,
+                cwd=self.work_root,
+                env_overrides=claude_env_overrides(),
+                env_remove=(*CLAUDE_AUTH_ENV_VARS, *CLAUDE_NESTING_ENV_VARS),
+                line_prefix="         ",
+            ),
+            command,
+        )
+        elapsed = time.monotonic() - t0
+        return ProviderMeta(provider="Claude", duration_s=elapsed)
+
 
 class CodexProvider:
     def __init__(self, config: AppConfig, work_root: Path, schema_dir: Path) -> None:

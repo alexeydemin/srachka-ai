@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .models import PlanDraft, PlanReview, RunState
+from .models import DiffReview, PlanDraft, PlanReview, RunState
 
 
 def plan_prompt(task: str, previous_review: PlanReview | None) -> str:
@@ -99,7 +99,8 @@ Required schema:
   "summary": "short verdict",
   "issues": [{{"severity": "high | medium | low", "message": "..."}}],
   "required_fixes": ["fix 1"],
-  "done_enough": true
+  "done_enough": true,
+  "question_for_user": null
 }}
 
 Rules:
@@ -108,7 +109,8 @@ Rules:
 3. Reject only for correctness, missing required step work, obvious regressions, or clearly unnecessary complexity.
 4. If the best answer is good enough, accept it.
 5. Use ask_user only if there is a real product choice that the diff cannot resolve alone.
-6. JSON only.
+6. When status is ask_user, set question_for_user to the specific question.
+7. JSON only.
 """.strip()
 
 
@@ -146,3 +148,29 @@ def implementation_brief(state: RunState) -> str:
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def fix_prompt(state: RunState, diff_review: DiffReview) -> str:
+    current_step = state.current_step or "Unknown step"
+
+    if not diff_review.issues and not diff_review.required_fixes:
+        return (
+            f"You were asked to implement this step:\n{current_step}\n\n"
+            "No changes were made. Please implement the step."
+        )
+
+    blocking = [i for i in diff_review.issues if i.severity in ("high", "medium")]
+    lines = [
+        f"You implemented this step:\n{current_step}\n",
+        "The reviewer found these blocking issues (high/medium only):\n",
+    ]
+    for issue in blocking:
+        lines.append(f"- [{issue.severity}] {issue.message}")
+
+    if diff_review.required_fixes:
+        lines.append("\nRequired fixes:")
+        for fix in diff_review.required_fixes:
+            lines.append(f"- {fix}")
+
+    lines.append("\nFix these specific problems and nothing else. Ignore any low-severity suggestions.")
+    return "\n".join(lines)

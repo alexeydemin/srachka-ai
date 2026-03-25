@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "summary", "issues", "required_fixes", "done_enough"],
+  "required": ["status", "summary", "issues", "required_fixes", "done_enough", "question_for_user"],
   "properties": {
     "status": {
       "type": "string",
@@ -34,6 +34,9 @@
     },
     "done_enough": {
       "type": "boolean"
+    },
+    "question_for_user": {
+      "type": ["string", "null"]
     }
   }
 }

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
-from .models import DiffReview, PlanDraft, PlanReview, RunState
-from .prompts import diff_review_prompt, implementation_brief, plan_prompt, review_prompt
+from .models import DiffReview, Issue, PlanDraft, PlanReview, RunState
+from .prompts import diff_review_prompt, fix_prompt, implementation_brief, plan_prompt, review_prompt
 from .providers import ClaudeProvider, CodexProvider, ProviderMeta, ProviderResult
 from .shell import CommandError
-from .state import REVIEW_HISTORY_FILE_NAME, point_latest, save_run_state
+from .state import REVIEW_HISTORY_FILE_NAME, STEP_REVIEWS_FILE_NAME, point_latest, save_run_state
 from .utils import append_jsonl
 
 
@@ -209,3 +210,85 @@ class Orchestrator:
     def review_diff(self, state: RunState, diff_text: str) -> DiffReview:
         raw = self._review_diff(state, diff_text)
         return DiffReview.from_dict(raw)
+
+    def _raw_git_diff(self) -> str:
+        completed = subprocess.run(
+            ["git", "diff", "--no-ext-diff", "--unified=1"],
+            cwd=str(self.work_root),
+            text=True,
+            capture_output=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(f"git diff failed:\n{completed.stderr}")
+        return completed.stdout.strip()
+
+    @staticmethod
+    def _has_blocking_issues(review: DiffReview) -> bool:
+        return any(i.severity in ("high", "medium") for i in review.issues)
+
+    @staticmethod
+    def _synthetic_empty_reject() -> DiffReview:
+        return DiffReview(
+            status="reject",
+            summary="No changes detected.",
+            issues=[Issue(severity="high", message="No changes were produced.")],
+            required_fixes=["Implement the step — no file changes were made."],
+            done_enough=False,
+        )
+
+    def do_step(self, state: RunState, run_dir: Path) -> DiffReview | None:
+        if state.current_step is None:
+            return None
+
+        step_reviews_path = run_dir / STEP_REVIEWS_FILE_NAME
+        step_index = state.current_step_index
+
+        # 1 initial implementation + up to max_step_fix_rounds fix rounds
+        max_attempts = 1 + self.config.max_step_fix_rounds
+        final_review: DiffReview | None = None
+
+        for round_index in range(1, max_attempts + 1):
+            _log_header(round_index, max_attempts)
+
+            # Run Claude
+            if round_index == 1:
+                prompt = implementation_brief(state)
+            else:
+                prompt = fix_prompt(state, final_review)
+            _log("Claude  implementing...")
+            meta = self.claude.implement(prompt)
+            _log(f"Claude  done ({_meta_str(meta)})")
+
+            # Get diff
+            diff_text = self._raw_git_diff()
+
+            if not diff_text:
+                _log("Warning: empty diff — no changes produced")
+                final_review = self._synthetic_empty_reject()
+                append_jsonl(step_reviews_path, {
+                    "type": "step_review", "step_index": step_index,
+                    "round": round_index, "review": final_review.to_dict(),
+                })
+                continue
+
+            # Codex reviews
+            review = DiffReview.from_dict(self._review_diff(state, diff_text))
+            final_review = review
+
+            append_jsonl(step_reviews_path, {
+                "type": "step_review", "step_index": step_index,
+                "round": round_index, "review": review.to_dict(),
+            })
+
+            if review.status == "ask_user":
+                _log("Status: ask_user — stopping")
+                break
+
+            if review.status == "accept" or not self._has_blocking_issues(review):
+                _log("Status: accepted")
+                review.status = "accept"
+                break
+
+            _log(f"Status: reject — {len([i for i in review.issues if i.severity in ('high', 'medium')])} blocking issues")
+
+        return final_review

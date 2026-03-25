@@ -41,7 +41,7 @@ def _git_diff(cwd: Path) -> str:
     )
     if completed.returncode != 0:
         raise RuntimeError(f"git diff failed:\n{completed.stderr}")
-    return completed.stdout.strip() or "No diff detected."
+    return completed.stdout.strip()
 
 
 def _format_step_progress(current_step_index: int, total_steps: int) -> str:
@@ -152,13 +152,56 @@ def cmd_review_diff(args: argparse.Namespace) -> int:
     _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
 
     if args.stdin_diff:
-        diff_text = sys.stdin.read().strip() or "No diff detected."
+        diff_text = sys.stdin.read().strip()
     else:
         diff_text = _git_diff(Path(state.work_repo))
+
+    if not diff_text:
+        diff_text = "No changes detected."
 
     review = orchestrator.review_diff(state, diff_text)
     print(json.dumps(review.to_dict(), ensure_ascii=False, indent=2))
     return 0 if review.status == "accept" else 2
+
+
+def cmd_do_step(args: argparse.Namespace) -> int:
+    try:
+        _, _, runs_root = _build_orchestrator()
+        run_dir = resolve_latest_run_dir(runs_root)
+        state = read_run_state(run_dir)
+        _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
+
+        if state.current_step is None:
+            print("All steps complete.")
+            return 0
+
+        print(f"Step {_format_step_progress(state.current_step_index, len(state.plan.steps))}: {state.current_step}")
+        review = orchestrator.do_step(state, run_dir)
+
+        if review is None:
+            print("All steps complete.")
+            return 0
+
+        if review.status == "accept":
+            print(f"Accepted: {review.summary}")
+            state.current_step_index = min(state.current_step_index + 1, len(state.plan.steps))
+            save_run_state(run_dir, state, implementation_brief(state))
+            print(f"Advanced to step: {_format_step_progress(state.current_step_index, len(state.plan.steps))}")
+            return 0
+
+        if review.status == "ask_user":
+            question = review.question_for_user or review.summary
+            print(f"Human input needed: {question}", file=sys.stderr)
+            return 2
+
+        # Final reject
+        print(f"Rejected: {review.summary}", file=sys.stderr)
+        for issue in review.issues:
+            print(f"  [{issue.severity}] {issue.message}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _decode_jwt_exp(token: str | None) -> str | None:
@@ -228,6 +271,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_review = sub.add_parser("review-diff", help="Ask Codex to review current diff")
     p_review.add_argument("--stdin-diff", action="store_true", help="Read diff from stdin instead of running git diff")
     p_review.set_defaults(func=cmd_review_diff)
+
+    p_do = sub.add_parser("do-step", help="Implement current step with Claude, review with Codex")
+    p_do.set_defaults(func=cmd_do_step)
 
     p_doctor = sub.add_parser("doctor", help="Show Claude/Codex auth diagnostics")
     p_doctor.set_defaults(func=cmd_doctor)
