@@ -1,8 +1,0 @@
-{
-  "claude_command": ["claude", "-p"],
-  "codex_command": ["codex", "--ask-for-approval", "never", "exec"],
-  "max_plan_rounds": 4,
-  "max_step_fix_rounds": 2,
-  "runs_dir": "runs",
-  "logs_dir": "logs"
-}

@@ -24,8 +24,8 @@ DEFAULT_CONFIG = AppConfig(
     codex_command=["codex", "--ask-for-approval", "never", "exec"],
     max_plan_rounds=4,
     max_step_fix_rounds=2,
-    runs_dir="runs",
-    logs_dir="logs",
+    runs_dir=".srachka/runs",
+    logs_dir=".srachka/logs",
     provider_timeout_s=600,
 )
 
@@ -44,8 +44,14 @@ def _merge(defaults: AppConfig, overrides: dict[str, Any]) -> AppConfig:
 
 
 def load_config(project_root: Path) -> AppConfig:
-    config_path = project_root / "config.json"
+    config_path = project_root / ".srachka" / "config.json"
+    old_config_path = project_root / "config.json"
     if not config_path.exists():
+        if old_config_path.exists():
+            raise RuntimeError(
+                f"Found config.json in project root but not in .srachka/.\n"
+                f"Move it: mv {old_config_path} {config_path}"
+            )
         return DEFAULT_CONFIG
     data = json.loads(config_path.read_text(encoding="utf-8"))
     return _merge(DEFAULT_CONFIG, data)

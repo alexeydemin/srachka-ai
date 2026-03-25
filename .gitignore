@@ -1,8 +1,5 @@
 __pycache__/
 *.pyc
 *.egg-info/
-config.json
-logs/*.log
-runs/*
-!runs/.gitkeep
-.srachka/
+.srachka/*
+!.srachka/schemas/
