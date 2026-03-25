@@ -73,6 +73,8 @@ class Orchestrator:
         self.config = config
         self.schema_dir = schema_dir
         self.runs_root = runs_root
+        self.logs_root = app_root / config.logs_dir
+        self._log_file: Path | None = None
         self.claude = ClaudeProvider(config, work_root)
         self.codex = CodexProvider(config, work_root, schema_dir)
 
@@ -97,6 +99,9 @@ class Orchestrator:
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         run_dir = self.runs_root / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
+        self.logs_root.mkdir(parents=True, exist_ok=True)
+        self._log_file = self.logs_root / f"{run_id}.log"
+        self._log_file.touch()
         return run_dir
 
     def _ask_plan(self, task: str, previous_review: PlanReview | None) -> dict:
