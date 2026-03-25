@@ -78,6 +78,14 @@ class Orchestrator:
         self.claude = ClaudeProvider(config, work_root)
         self.codex = CodexProvider(config, work_root, schema_dir)
 
+    def _flog(self, message: str) -> None:
+        if self._log_file is None:
+            return
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        with self._log_file.open("a") as f:
+            f.write(f"[{ts}] {message}\n")
+            f.flush()
+
     def _ensure_clean_repo(self) -> None:
         result = subprocess.run(
             ["git", "status", "--porcelain"],
