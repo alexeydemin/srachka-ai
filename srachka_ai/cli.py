@@ -4,6 +4,7 @@ import argparse
 import base64
 import difflib
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -235,6 +236,42 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_logs(args: argparse.Namespace) -> int:
+    app_root = project_root()
+    config = load_config(app_root)
+    logs_root = app_root / config.logs_dir
+
+    if not logs_root.is_dir():
+        print(f"No logs directory found: {logs_root}", file=sys.stderr)
+        return 1
+
+    if args.list:
+        log_files = sorted(logs_root.glob("*.log"))
+        if not log_files:
+            print("No log files found.")
+            return 0
+        for f in log_files:
+            size_kb = f.stat().st_size / 1024
+            print(f"  {f.stem}  ({size_kb:.1f} KB)")
+        return 0
+
+    if args.run:
+        log_path = logs_root / f"{args.run}.log"
+        if not log_path.is_file():
+            print(f"Log file not found: {log_path}", file=sys.stderr)
+            return 1
+    else:
+        log_files = sorted(logs_root.glob("*.log"))
+        if not log_files:
+            print("No log files found.", file=sys.stderr)
+            return 1
+        log_path = log_files[-1]
+
+    print(f"Tailing {log_path.name} ...", file=sys.stderr)
+    os.execvp("tail", ["tail", "-f", str(log_path)])
+    return 0  # unreachable after execvp
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     app_root = project_root()
     config = load_config(app_root)
@@ -291,6 +328,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="Print the orchestrator prompt for Claude")
     p_init.set_defaults(func=cmd_init)
+
+    p_logs = sub.add_parser("logs", help="View debate log files")
+    p_logs.add_argument("--list", action="store_true", help="List all log files")
+    p_logs.add_argument("--run", help="Show log for a specific run ID")
+    p_logs.set_defaults(func=cmd_logs)
 
     p_doctor = sub.add_parser("doctor", help="Show Claude/Codex auth diagnostics")
     p_doctor.set_defaults(func=cmd_doctor)
