@@ -55,6 +55,7 @@ class ProviderMeta:
 class ProviderResult:
     data: dict = field(default_factory=dict)
     meta: ProviderMeta = field(default_factory=ProviderMeta)
+    raw_response: str = ""
 
 
 def common_cli_env() -> dict[str, str]:
@@ -102,13 +103,16 @@ class ClaudeProvider:
         elapsed = time.monotonic() - t0
         meta = ProviderMeta(provider="Claude", duration_s=elapsed)
         data = extract_json(result.stdout)
-        return ProviderResult(data=data, meta=meta)
+        return ProviderResult(data=data, meta=meta, raw_response=result.stdout)
 
-    def implement(self, prompt: str) -> ProviderMeta:
-        """Run Claude for freeform implementation (file edits, not JSON)."""
+    def implement(self, prompt: str) -> tuple[ProviderMeta, str]:
+        """Run Claude for freeform implementation (file edits, not JSON).
+
+        Returns (meta, response_text) tuple.
+        """
         command = [*self.config.claude_command, prompt]
         t0 = time.monotonic()
-        require_success(
+        result = require_success(
             run_command_streaming(
                 command,
                 cwd=self.work_root,
@@ -119,7 +123,7 @@ class ClaudeProvider:
             command,
         )
         elapsed = time.monotonic() - t0
-        return ProviderMeta(provider="Claude", duration_s=elapsed)
+        return ProviderMeta(provider="Claude", duration_s=elapsed), result.stdout
 
 
 class CodexProvider:
@@ -151,4 +155,4 @@ class CodexProvider:
         elapsed = time.monotonic() - t0
         meta = ProviderMeta(provider="Codex", duration_s=elapsed)
         data = extract_json(result.stdout)
-        return ProviderResult(data=data, meta=meta)
+        return ProviderResult(data=data, meta=meta, raw_response=result.stdout)

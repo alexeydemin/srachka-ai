@@ -103,33 +103,47 @@ class Orchestrator:
                 "Run 'git stash -u' or commit first before using srachka."
             )
 
+    def attach_log(self, run_id: str) -> None:
+        self.logs_root.mkdir(parents=True, exist_ok=True)
+        self._log_file = self.logs_root / f"{run_id}.log"
+        if not self._log_file.exists():
+            self._log_file.touch()
+
     def create_run_dir(self) -> Path:
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         run_dir = self.runs_root / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
-        self.logs_root.mkdir(parents=True, exist_ok=True)
-        self._log_file = self.logs_root / f"{run_id}.log"
-        self._log_file.touch()
+        self.attach_log(run_id)
         return run_dir
 
     def _ask_plan(self, task: str, previous_review: PlanReview | None) -> dict:
         prompt = plan_prompt(task, previous_review)
+        self._flog(f"=== ASK PLAN (prompt) ===\n{prompt}")
         primary_error: CommandError | None = None
         _log("Claude  generating plan...")
         try:
             pr = self.claude.ask_json(prompt)
             _log(f"Claude  done ({_meta_str(pr.meta)})")
+            self._flog(f"=== PLAN RESPONSE (Claude, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
         except CommandError as primary_exc:
+            self._flog(f"Claude error in _ask_plan: {primary_exc}")
             if not _is_auth_failure(primary_exc):
                 raise
             primary_error = primary_exc
+        except Exception as exc:
+            self._flog(f"Claude unexpected error in _ask_plan: {exc}")
+            raise
         _log("Claude  auth failed, falling back to Codex...")
+        self._flog("Claude auth failed, falling back to Codex for plan")
+        self._flog(f"=== ASK PLAN fallback (prompt) ===\n{prompt}")
         try:
             pr = self.codex.ask_json(prompt, "plan.schema.json")
             _log(f"Codex   done ({_meta_str(pr.meta)})")
+            self._flog(f"=== PLAN RESPONSE (Codex fallback, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
-        except CommandError as fallback_exc:
+        except (CommandError, Exception) as fallback_exc:
+            self._flog(f"Plan generation failed completely.\nClaude: {primary_error}\nCodex: {fallback_exc}")
             raise RuntimeError(
                 "Planning failed. Claude and Codex were both unavailable for plan generation.\n\n"
                 f"Claude error:\n{primary_error}\n\n"
@@ -138,22 +152,32 @@ class Orchestrator:
 
     def _review_plan(self, task: str, plan: PlanDraft) -> dict:
         prompt = review_prompt(task, plan)
+        self._flog(f"=== REVIEW PLAN (prompt) ===\n{prompt}")
         primary_error: CommandError | None = None
         _log("Codex   reviewing plan...")
         try:
             pr = self.codex.ask_json(prompt, "plan_review.schema.json")
             _log(f"Codex   done ({_meta_str(pr.meta)})")
+            self._flog(f"=== PLAN REVIEW RESPONSE (Codex, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
         except CommandError as primary_exc:
+            self._flog(f"Codex error in _review_plan: {primary_exc}")
             if not _is_auth_failure(primary_exc):
                 raise
             primary_error = primary_exc
+        except Exception as exc:
+            self._flog(f"Codex unexpected error in _review_plan: {exc}")
+            raise
         _log("Codex   auth failed, falling back to Claude...")
+        self._flog("Codex auth failed, falling back to Claude for plan review")
+        self._flog(f"=== REVIEW PLAN fallback (prompt) ===\n{prompt}")
         try:
             pr = self.claude.ask_json(prompt)
             _log(f"Claude  done ({_meta_str(pr.meta)})")
+            self._flog(f"=== PLAN REVIEW RESPONSE (Claude fallback, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
-        except CommandError as fallback_exc:
+        except (CommandError, Exception) as fallback_exc:
+            self._flog(f"Plan review failed completely.\nCodex: {primary_error}\nClaude: {fallback_exc}")
             raise RuntimeError(
                 "Plan review failed. Codex and Claude were both unavailable for review.\n\n"
                 f"Codex error:\n{primary_error}\n\n"
@@ -162,22 +186,32 @@ class Orchestrator:
 
     def _review_diff(self, state: RunState, diff_text: str) -> dict:
         prompt = diff_review_prompt(state, diff_text)
+        self._flog(f"=== REVIEW DIFF (prompt) ===\n{prompt}")
         primary_error: CommandError | None = None
         _log("Codex   reviewing diff...")
         try:
             pr = self.codex.ask_json(prompt, "diff_review.schema.json")
             _log(f"Codex   done ({_meta_str(pr.meta)})")
+            self._flog(f"=== DIFF REVIEW RESPONSE (Codex, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
         except CommandError as primary_exc:
+            self._flog(f"Codex error in _review_diff: {primary_exc}")
             if not _is_auth_failure(primary_exc):
                 raise
             primary_error = primary_exc
+        except Exception as exc:
+            self._flog(f"Codex unexpected error in _review_diff: {exc}")
+            raise
         _log("Codex   auth failed, falling back to Claude...")
+        self._flog("Codex auth failed, falling back to Claude for diff review")
+        self._flog(f"=== REVIEW DIFF fallback (prompt) ===\n{prompt}")
         try:
             pr = self.claude.ask_json(prompt)
             _log(f"Claude  done ({_meta_str(pr.meta)})")
+            self._flog(f"=== DIFF REVIEW RESPONSE (Claude fallback, {_meta_str(pr.meta)}) ===\n{pr.raw_response}")
             return pr.data
-        except CommandError as fallback_exc:
+        except (CommandError, Exception) as fallback_exc:
+            self._flog(f"Diff review failed completely.\nCodex: {primary_error}\nClaude: {fallback_exc}")
             raise RuntimeError(
                 "Diff review failed. Codex and Claude were both unavailable for review.\n\n"
                 f"Codex error:\n{primary_error}\n\n"
@@ -187,6 +221,7 @@ class Orchestrator:
     def debate_plan(self, task: str) -> RunState:
         self._ensure_clean_repo()
         run_dir = self.create_run_dir()
+        self._flog(f"=== DEBATE PLAN START ===\nrun_id: {run_dir.name}\ntask: {task}")
         review_path = run_dir / REVIEW_HISTORY_FILE_NAME
         previous_review: PlanReview | None = None
         final_plan: PlanDraft | None = None
@@ -195,6 +230,7 @@ class Orchestrator:
 
         for round_index in range(1, self.config.max_plan_rounds + 1):
             _log_header(round_index, self.config.max_plan_rounds)
+            self._flog(f"--- Plan round {round_index}/{self.config.max_plan_rounds} ---")
             plan = PlanDraft.from_dict(self._ask_plan(task, previous_review))
             review = PlanReview.from_dict(self._review_plan(task, plan))
 
@@ -211,16 +247,20 @@ class Orchestrator:
 
             if review.status == "approved":
                 _log(f"Status: approved")
+                self._flog(f"Plan round {round_index} status: approved")
                 break
 
             if review.status == "ask_user":
                 _log(f"Status: ask_user -- human input needed")
+                self._flog(f"Plan round {round_index} status: ask_user")
                 break
 
             _log(f"Status: {review.status} -- next round")
+            self._flog(f"Plan round {round_index} status: {review.status} — next round")
             previous_review = review
 
         if final_plan is None or final_review is None:
+            self._flog("Planning loop finished without a plan or review")
             raise RuntimeError("Planning loop finished without a plan or review")
 
         state = RunState(
@@ -236,6 +276,7 @@ class Orchestrator:
         save_run_state(run_dir, state, implementation_text)
         point_latest(self.runs_root, run_dir)
         _log(f"Run saved: {run_dir.name}")
+        self._flog(f"=== DEBATE PLAN END ===\nrun saved: {run_dir.name}\nfinal status: {final_review.status}\nsteps: {len(final_plan.steps)}")
         return state
 
     def review_diff(self, state: RunState, diff_text: str) -> DiffReview:
@@ -256,8 +297,11 @@ class Orchestrator:
             capture_output=True,
         )
         if completed.returncode != 0:
+            self._flog(f"git diff failed:\n{completed.stderr}")
             raise RuntimeError(f"git diff failed:\n{completed.stderr}")
-        return completed.stdout.strip()
+        diff = completed.stdout.strip()
+        self._flog(f"=== GIT DIFF ({len(diff)} chars) ===\n{diff}")
+        return diff
 
     @staticmethod
     def _has_blocking_issues(review: DiffReview) -> bool:
@@ -280,6 +324,7 @@ class Orchestrator:
 
         step_reviews_path = run_dir / STEP_REVIEWS_FILE_NAME
         step_index = state.current_step_index
+        self._flog(f"=== DO STEP {step_index + 1} ===\n{state.current_step}")
 
         # 1 initial implementation + up to max_step_fix_rounds fix rounds
         max_attempts = 1 + self.config.max_step_fix_rounds
@@ -287,21 +332,29 @@ class Orchestrator:
 
         for round_index in range(1, max_attempts + 1):
             _log_header(round_index, max_attempts)
+            self._flog(f"--- Step {step_index + 1}, attempt {round_index}/{max_attempts} ---")
 
             # Run Claude
             if round_index == 1:
                 prompt = implementation_brief(state)
             else:
                 prompt = fix_prompt(state, final_review)
+            self._flog(f"=== IMPLEMENTATION PROMPT ===\n{prompt}")
             _log("Claude  implementing...")
-            meta = self.claude.implement(prompt)
+            try:
+                meta, response_text = self.claude.implement(prompt)
+            except CommandError as exc:
+                self._flog(f"Claude implement error:\n{exc}")
+                raise
             _log(f"Claude  done ({_meta_str(meta)})")
+            self._flog(f"=== IMPLEMENTATION RESPONSE (Claude, {_meta_str(meta)}) ===\n{response_text}")
 
             # Get diff
             diff_text = self._raw_git_diff()
 
             if not diff_text:
                 _log("Warning: empty diff — no changes produced")
+                self._flog("Warning: empty diff — no changes produced")
                 final_review = self._synthetic_empty_reject()
                 append_jsonl(step_reviews_path, {
                     "type": "step_review", "step_index": step_index,
@@ -320,24 +373,30 @@ class Orchestrator:
 
             if review.status == "ask_user":
                 _log("Status: ask_user — stopping")
+                self._flog(f"Step {step_index + 1} attempt {round_index} status: ask_user")
                 break
 
             if review.status == "accept" or not self._has_blocking_issues(review):
                 _log("Status: accepted")
                 review.status = "accept"
+                self._flog(f"Step {step_index + 1} attempt {round_index} status: accepted")
                 break
 
-            _log(f"Status: reject — {len([i for i in review.issues if i.severity in ('high', 'medium')])} blocking issues")
+            blocking = len([i for i in review.issues if i.severity in ("high", "medium")])
+            _log(f"Status: reject — {blocking} blocking issues")
+            self._flog(f"Step {step_index + 1} attempt {round_index} status: reject — {blocking} blocking issues")
 
         if final_review is not None and final_review.status == "accept":
             self._auto_commit(state)
 
+        self._flog(f"=== DO STEP {step_index + 1} END === status: {final_review.status if final_review else 'None'}")
         return final_review
 
     def _auto_commit(self, state: RunState) -> None:
         step_num = state.current_step_index + 1
         description = (state.current_step or "unknown step")[:70].replace("\n", " ")
         message = f"Step {step_num}: {description}"
+        self._flog(f"Auto-committing: {message}")
         subprocess.run(
             ["git", "add", "-A"],
             cwd=str(self.work_root),
@@ -354,9 +413,12 @@ class Orchestrator:
             combined = f"{result.stdout}\n{result.stderr}".lower()
             if "nothing to commit" in combined:
                 _log("Warning: nothing to commit after accept")
+                self._flog("Warning: nothing to commit after accept")
             else:
+                self._flog(f"git commit failed:\n{result.stderr.strip()}")
                 raise RuntimeError(
                     f"git commit failed after accepted step:\n{result.stderr.strip()}"
                 )
         else:
             _log(f"Committed: {message}")
+            self._flog(f"Committed: {message}")

@@ -8,6 +8,7 @@ from unittest import mock
 from srachka_ai.config import DEFAULT_CONFIG
 from srachka_ai.models import PlanDraft, PlanReview, RunState
 from srachka_ai.orchestrator import Orchestrator, _is_auth_failure
+from srachka_ai.providers import ProviderMeta, ProviderResult
 from srachka_ai.shell import CommandError
 
 
@@ -36,13 +37,16 @@ class OrchestratorFallbackTests(unittest.TestCase):
                 with mock.patch.object(
                     orchestrator.codex,
                     "ask_json",
-                    return_value={
-                        "status": "draft",
-                        "summary": "fallback plan",
-                        "steps": ["step 1"],
-                        "risks": [],
-                        "open_questions": [],
-                    },
+                    return_value=ProviderResult(
+                        data={
+                            "status": "draft",
+                            "summary": "fallback plan",
+                            "steps": ["step 1"],
+                            "risks": [],
+                            "open_questions": [],
+                        },
+                        meta=ProviderMeta(provider="Codex"),
+                    ),
                 ) as codex_mock:
                     result = orchestrator._ask_plan("task", None)
 
@@ -69,13 +73,16 @@ class OrchestratorFallbackTests(unittest.TestCase):
                 with mock.patch.object(
                     orchestrator.claude,
                     "ask_json",
-                    return_value={
-                        "status": "approved",
-                        "summary": "fallback review",
-                        "issues": [],
-                        "requested_changes": [],
-                        "question_for_user": None,
-                    },
+                    return_value=ProviderResult(
+                        data={
+                            "status": "approved",
+                            "summary": "fallback review",
+                            "issues": [],
+                            "requested_changes": [],
+                            "question_for_user": None,
+                        },
+                        meta=ProviderMeta(provider="Claude"),
+                    ),
                 ):
                     result = orchestrator._review_plan("task", plan)
 
@@ -114,13 +121,16 @@ class OrchestratorFallbackTests(unittest.TestCase):
                 with mock.patch.object(
                     orchestrator.claude,
                     "ask_json",
-                    return_value={
-                        "status": "accept",
-                        "summary": "fallback diff review",
-                        "issues": [],
-                        "required_fixes": [],
-                        "done_enough": True,
-                    },
+                    return_value=ProviderResult(
+                        data={
+                            "status": "accept",
+                            "summary": "fallback diff review",
+                            "issues": [],
+                            "required_fixes": [],
+                            "done_enough": True,
+                        },
+                        meta=ProviderMeta(provider="Claude"),
+                    ),
                 ):
                     result = orchestrator._review_diff(state, "diff")
 

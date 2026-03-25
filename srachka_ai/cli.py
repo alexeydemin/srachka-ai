@@ -156,6 +156,7 @@ def cmd_review_diff(args: argparse.Namespace) -> int:
     run_dir = resolve_latest_run_dir(runs_root)
     state = read_run_state(run_dir)
     _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
+    orchestrator.attach_log(state.run_id)
 
     if args.stdin_diff:
         diff_text = sys.stdin.read().strip()
@@ -176,6 +177,7 @@ def cmd_do_step(args: argparse.Namespace) -> int:
         run_dir = resolve_latest_run_dir(runs_root)
         state = read_run_state(run_dir)
         _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
+        orchestrator.attach_log(state.run_id)
 
         if state.current_step is None:
             print("All steps complete.")
