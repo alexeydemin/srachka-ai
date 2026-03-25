@@ -18,6 +18,14 @@ class CommandError(RuntimeError):
     pass
 
 
+class CommandTimeout(CommandError):
+    def __init__(self, command: list[str], timeout_s: int | float, elapsed_s: float):
+        self.timeout_s = timeout_s
+        self.elapsed_s = elapsed_s
+        joined = " ".join(command)
+        super().__init__(f"Command timed out after {elapsed_s:.0f}s (limit {timeout_s}s): {joined}")
+
+
 def _build_env(
     env_overrides: dict[str, str] | None = None,
     env_remove: list[str] | tuple[str, ...] | None = None,
@@ -38,17 +46,22 @@ def run_command(
     input_text: str | None = None,
     env_overrides: dict[str, str] | None = None,
     env_remove: list[str] | tuple[str, ...] | None = None,
+    timeout_s: int | None = None,
 ) -> CommandResult:
     env = _build_env(env_overrides, env_remove)
 
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd),
-        input=input_text,
-        text=True,
-        capture_output=True,
-        env=env,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd),
+            input=input_text,
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CommandTimeout(command, timeout_s, exc.timeout) from exc
     return CommandResult(
         returncode=completed.returncode,
         stdout=completed.stdout,
