@@ -10,6 +10,9 @@
 | [x] | Commit per step | Clean repo guard + `git add -A` + `git diff --cached` + auto-commit after accept. | 2026-03-24 | 2026-03-24 |
 | [x] | `srachka init` | Prints MD prompt for Claude orchestrator: pre-flight, branch, plan, do-step loop, final validation, PR, CI, timeouts. | 2026-03-24 | 2026-03-25 |
 | [x] | File logging + `srachka logs` | Full debate logging to `logs/{run_id}.log` (prompts, responses, diffs, errors). `srachka logs` does `tail -f` on latest log. | 2026-03-24 | 2026-03-25 |
+| [x] | Provider timeout | Threading-based timeout for `run_command_streaming` — reader threads + `process.wait(timeout=)`. `CommandTimeout` exception, synthetic reject on timeout in `do_step`. | 2026-03-25 | 2026-03-25 |
+| [x] | Split config | Separate `claude_command` (planning) and `claude_implement_command` (implementation with `--effort max`). | 2026-03-25 | 2026-03-25 |
+| [x] | Clean project layout | Runtime files moved to `.srachka/` (config, runs, logs, schemas, tasks). Task files gitignored — no more dirty repo from creating tasks. | 2026-03-25 | 2026-03-25 |
 
 ## Lives in the orchestrator prompt (not code)
 
