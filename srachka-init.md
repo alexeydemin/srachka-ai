@@ -33,16 +33,26 @@
   - `srachka do-step` — Claude implements, Codex reviews, auto-fix loop
   - OR manual: `srachka show-step` → implement → `srachka review-diff` → `srachka next-step`
 - After each accepted step, changes are auto-committed (commit-per-step feature)
+- Commit without asking the user for confirmation — you have full authority to commit
 - Continue until all steps complete
 
-### 6. PR creation
-- After all steps done and committed, push the branch: `git push -u origin <branch>`
+### 6. Final validation
+- After all steps complete, run a final sanity check before creating a PR
+- Get the full diff vs base branch: `git diff main...HEAD`
+- Run `srachka review-diff --stdin-diff` with this diff piped in, so Codex reviews the complete result against the original task
+- Codex checks: is the task fully implemented? Any regressions? Does it all fit together?
+- If Codex rejects — do one round of fixes, commit, and re-validate
+- If rejected again after the fix round — stop and ask the user
+- Do NOT go back to planning — the plan was correct, only the implementation needs fixing
+
+### 7. PR creation
+- After validation passes, push the branch: `git push -u origin <branch>`
 - Look at existing PRs in the repo to understand title/description format
 - Use your memory of the project to match the convention
 - Create PR via `gh pr create` following the same style
 - Include a summary of what was done and link to the task
 
-### 7. CI check
+### 8. CI check
 - After PR is created, check CI status: `gh pr checks <pr-number>`
 - Determine what CI system is used (GitHub Actions, CircleCI, Jenkins, etc.)
 - Look at the repo's CI config files to understand the setup
@@ -54,14 +64,16 @@
   - Re-check CI
 - Repeat until all checks pass
 
-### 8. Step timeout
-- If a step takes more than 15 minutes — skip it
-- Log which step was skipped and why
+### 9. Timeouts
+- Every srachka command has a 10-minute timeout
+- If any operation exceeds 10 minutes — skip it and move on
+- Log which step/operation was skipped and why
 - Note it for human review
 
-### 9. Rules of behavior
-- Do NOT ask the user for confirmation at any step — be fully autonomous
+### 10. Rules of behavior
+- Be fully autonomous — do NOT ask the user for confirmation at any step
 - Do NOT stop between steps to report progress — just keep going
+- Commit after each accepted step without asking — you have authority to commit
 - Only stop if `ask_user` status is returned by the debate
 - If something breaks — try to fix it, don't ask
 - Keep commits small and focused (one per step)
@@ -77,6 +89,5 @@
 
 ## Relationship to other tasks
 
-- Depends on: `do-step` (done), `commit-per-step` (next task)
-- `commit-per-step` adds auto-commit after accept — the prompt references this
-- After both are done, `srachka init` can be implemented as a CLI command that prints this prompt
+- Depends on: `do-step` (done), `commit-per-step` (done)
+- Ready to implement as a CLI command that prints this prompt as markdown
