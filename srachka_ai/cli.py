@@ -227,6 +227,12 @@ def _decode_jwt_exp(token: str | None) -> str | None:
     return datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    prompt_path = Path(__file__).parent / "init_prompt.md"
+    print(prompt_path.read_text(encoding="utf-8"))
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     app_root = project_root()
     config = load_config(app_root)
@@ -280,6 +286,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_do = sub.add_parser("do-step", help="Implement current step with Claude, review with Codex")
     p_do.set_defaults(func=cmd_do_step)
+
+    p_init = sub.add_parser("init", help="Print the orchestrator prompt for Claude")
+    p_init.set_defaults(func=cmd_init)
 
     p_doctor = sub.add_parser("doctor", help="Show Claude/Codex auth diagnostics")
     p_doctor.set_defaults(func=cmd_doctor)
