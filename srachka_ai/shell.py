@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,6 +77,7 @@ def run_command_streaming(
     env_overrides: dict[str, str] | None = None,
     env_remove: list[str] | tuple[str, ...] | None = None,
     line_prefix: str = "  ",
+    timeout_s: int | None = None,
 ) -> CommandResult:
     """Run a command, streaming stdout to stderr line-by-line for visibility."""
     env = _build_env(env_overrides, env_remove)
@@ -92,19 +94,39 @@ def run_command_streaming(
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
 
-    # Stream stdout to stderr so user sees progress, while capturing it
-    for line in process.stdout:
-        stdout_lines.append(line)
-        stripped = line.rstrip("\n")
-        if stripped:
-            print(f"{line_prefix}{stripped}", file=sys.stderr, flush=True)
+    def _read_stdout() -> None:
+        try:
+            for line in process.stdout:
+                stdout_lines.append(line)
+                stripped = line.rstrip("\n")
+                if stripped:
+                    print(f"{line_prefix}{stripped}", file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            pass  # stream closed after kill — expected
 
-    # Read remaining stderr
-    remaining_stderr = process.stderr.read()
-    if remaining_stderr:
-        stderr_lines.append(remaining_stderr)
+    def _read_stderr() -> None:
+        try:
+            for line in process.stderr:
+                stderr_lines.append(line)
+        except (OSError, ValueError):
+            pass  # stream closed after kill — expected
 
-    process.wait()
+    stdout_thread = threading.Thread(target=_read_stdout, daemon=True)
+    stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
+
+    try:
+        process.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        raise CommandTimeout(command, timeout_s, timeout_s) from None
+
+    stdout_thread.join()
+    stderr_thread.join()
 
     return CommandResult(
         returncode=process.returncode,
