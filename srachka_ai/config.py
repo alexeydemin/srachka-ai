@@ -15,6 +15,7 @@ class AppConfig:
     max_step_fix_rounds: int
     runs_dir: str
     logs_dir: str
+    provider_timeout_s: int
 
 
 DEFAULT_CONFIG = AppConfig(
@@ -25,6 +26,7 @@ DEFAULT_CONFIG = AppConfig(
     max_step_fix_rounds=2,
     runs_dir="runs",
     logs_dir="logs",
+    provider_timeout_s=600,
 )
 
 
@@ -37,6 +39,7 @@ def _merge(defaults: AppConfig, overrides: dict[str, Any]) -> AppConfig:
         max_step_fix_rounds=int(overrides.get("max_step_fix_rounds", defaults.max_step_fix_rounds)),
         runs_dir=str(overrides.get("runs_dir", defaults.runs_dir)),
         logs_dir=str(overrides.get("logs_dir", defaults.logs_dir)),
+        provider_timeout_s=int(overrides.get("provider_timeout_s", defaults.provider_timeout_s)),
     )
 
 
