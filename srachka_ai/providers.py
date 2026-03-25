@@ -110,7 +110,7 @@ class ClaudeProvider:
 
         Returns (meta, response_text) tuple.
         """
-        command = [*self.config.claude_command, prompt]
+        command = [*self.config.claude_implement_command, prompt]
         t0 = time.monotonic()
         result = require_success(
             run_command_streaming(

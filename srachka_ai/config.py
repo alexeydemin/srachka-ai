@@ -9,6 +9,7 @@ from typing import Any
 @dataclass
 class AppConfig:
     claude_command: list[str]
+    claude_implement_command: list[str]
     codex_command: list[str]
     max_plan_rounds: int
     max_step_fix_rounds: int
@@ -18,6 +19,7 @@ class AppConfig:
 
 DEFAULT_CONFIG = AppConfig(
     claude_command=["claude", "-p"],
+    claude_implement_command=["claude", "-p"],
     codex_command=["codex", "--ask-for-approval", "never", "exec"],
     max_plan_rounds=4,
     max_step_fix_rounds=2,
@@ -29,6 +31,7 @@ DEFAULT_CONFIG = AppConfig(
 def _merge(defaults: AppConfig, overrides: dict[str, Any]) -> AppConfig:
     return AppConfig(
         claude_command=[str(x) for x in overrides.get("claude_command", defaults.claude_command)],
+        claude_implement_command=[str(x) for x in overrides.get("claude_implement_command", overrides.get("claude_command", defaults.claude_implement_command))],
         codex_command=[str(x) for x in overrides.get("codex_command", defaults.codex_command)],
         max_plan_rounds=int(overrides.get("max_plan_rounds", defaults.max_plan_rounds)),
         max_step_fix_rounds=int(overrides.get("max_step_fix_rounds", defaults.max_step_fix_rounds)),
