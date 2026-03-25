@@ -230,7 +230,21 @@ def _decode_jwt_exp(token: str | None) -> str | None:
     return datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
 
 
+BANNER = """
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃                                            ┃
+  ┃   ╔═╗╦═╗╔═╗╔═╗╦ ╦╦╔═╔═╗                  ┃
+  ┃   ╚═╗╠╦╝╠═╣║  ╠═╣╠╩╗╠═╣                  ┃
+  ┃   ╚═╝╩╚═╩ ╩╚═╝╩ ╩╩ ╩╩ ╩                  ┃
+  ┃                                            ┃
+  ┃   Claude proposes ── debate ── Codex bites ┃
+  ┃                                            ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+"""
+
+
 def cmd_init(args: argparse.Namespace) -> int:
+    print(BANNER, file=sys.stderr)
     prompt_path = Path(__file__).parent / "init_prompt.md"
     print(prompt_path.read_text(encoding="utf-8"))
     return 0
