@@ -1,15 +1,43 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
 from .models import DiffReview, PlanDraft, PlanReview, RunState
 from .prompts import diff_review_prompt, implementation_brief, plan_prompt, review_prompt
-from .providers import ClaudeProvider, CodexProvider
+from .providers import ClaudeProvider, CodexProvider, ProviderMeta, ProviderResult
 from .shell import CommandError
 from .state import REVIEW_HISTORY_FILE_NAME, point_latest, save_run_state
 from .utils import append_jsonl
+
+
+def _ts() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def _log(message: str) -> None:
+    print(f"  [{_ts()}] {message}", file=sys.stderr, flush=True)
+
+
+def _meta_str(meta: ProviderMeta) -> str:
+    parts = [f"{meta.duration_s:.0f}s"]
+    if meta.input_tokens or meta.output_tokens:
+        total = meta.input_tokens + meta.output_tokens
+        if total >= 1000:
+            parts.append(f"{total / 1000:.1f}k tok")
+        else:
+            parts.append(f"{total} tok")
+    if meta.cost_usd:
+        parts.append(f"${meta.cost_usd:.4f}")
+    return ", ".join(parts)
+
+
+def _log_header(round_index: int, max_rounds: int) -> None:
+    header = f" Round {round_index}/{max_rounds} "
+    line = header.center(50, "\u2500")
+    print(f"\n{line}", file=sys.stderr, flush=True)
 
 
 AUTH_ERROR_MARKERS = (
@@ -56,14 +84,20 @@ class Orchestrator:
     def _ask_plan(self, task: str, previous_review: PlanReview | None) -> dict:
         prompt = plan_prompt(task, previous_review)
         primary_error: CommandError | None = None
+        _log("Claude  generating plan...")
         try:
-            return self.claude.ask_json(prompt)
+            pr = self.claude.ask_json(prompt)
+            _log(f"Claude  done ({_meta_str(pr.meta)})")
+            return pr.data
         except CommandError as primary_exc:
             if not _is_auth_failure(primary_exc):
                 raise
             primary_error = primary_exc
+        _log("Claude  auth failed, falling back to Codex...")
         try:
-            return self.codex.ask_json(prompt, "plan.schema.json")
+            pr = self.codex.ask_json(prompt, "plan.schema.json")
+            _log(f"Codex   done ({_meta_str(pr.meta)})")
+            return pr.data
         except CommandError as fallback_exc:
             raise RuntimeError(
                 "Planning failed. Claude and Codex were both unavailable for plan generation.\n\n"
@@ -74,14 +108,20 @@ class Orchestrator:
     def _review_plan(self, task: str, plan: PlanDraft) -> dict:
         prompt = review_prompt(task, plan)
         primary_error: CommandError | None = None
+        _log("Codex   reviewing plan...")
         try:
-            return self.codex.ask_json(prompt, "plan_review.schema.json")
+            pr = self.codex.ask_json(prompt, "plan_review.schema.json")
+            _log(f"Codex   done ({_meta_str(pr.meta)})")
+            return pr.data
         except CommandError as primary_exc:
             if not _is_auth_failure(primary_exc):
                 raise
             primary_error = primary_exc
+        _log("Codex   auth failed, falling back to Claude...")
         try:
-            return self.claude.ask_json(prompt)
+            pr = self.claude.ask_json(prompt)
+            _log(f"Claude  done ({_meta_str(pr.meta)})")
+            return pr.data
         except CommandError as fallback_exc:
             raise RuntimeError(
                 "Plan review failed. Codex and Claude were both unavailable for review.\n\n"
@@ -92,14 +132,20 @@ class Orchestrator:
     def _review_diff(self, state: RunState, diff_text: str) -> dict:
         prompt = diff_review_prompt(state, diff_text)
         primary_error: CommandError | None = None
+        _log("Codex   reviewing diff...")
         try:
-            return self.codex.ask_json(prompt, "diff_review.schema.json")
+            pr = self.codex.ask_json(prompt, "diff_review.schema.json")
+            _log(f"Codex   done ({_meta_str(pr.meta)})")
+            return pr.data
         except CommandError as primary_exc:
             if not _is_auth_failure(primary_exc):
                 raise
             primary_error = primary_exc
+        _log("Codex   auth failed, falling back to Claude...")
         try:
-            return self.claude.ask_json(prompt)
+            pr = self.claude.ask_json(prompt)
+            _log(f"Claude  done ({_meta_str(pr.meta)})")
+            return pr.data
         except CommandError as fallback_exc:
             raise RuntimeError(
                 "Diff review failed. Codex and Claude were both unavailable for review.\n\n"
@@ -116,6 +162,7 @@ class Orchestrator:
         review_history: list[dict] = []
 
         for round_index in range(1, self.config.max_plan_rounds + 1):
+            _log_header(round_index, self.config.max_plan_rounds)
             plan = PlanDraft.from_dict(self._ask_plan(task, previous_review))
             review = PlanReview.from_dict(self._review_plan(task, plan))
 
@@ -131,11 +178,14 @@ class Orchestrator:
             final_review = review
 
             if review.status == "approved":
+                _log(f"Status: approved")
                 break
 
             if review.status == "ask_user":
+                _log(f"Status: ask_user -- human input needed")
                 break
 
+            _log(f"Status: {review.status} -- next round")
             previous_review = review
 
         if final_plan is None or final_review is None:
@@ -153,6 +203,7 @@ class Orchestrator:
         implementation_text = implementation_brief(state)
         save_run_state(run_dir, state, implementation_text)
         point_latest(self.runs_root, run_dir)
+        _log(f"Run saved: {run_dir.name}")
         return state
 
     def review_diff(self, state: RunState, diff_text: str) -> DiffReview:
