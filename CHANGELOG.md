@@ -14,6 +14,13 @@
 | [x] | Split config | Separate `claude_command` (planning) and `claude_implement_command` (implementation with `--effort max`). | 2026-03-25 | 2026-03-25 |
 | [x] | Clean project layout | Runtime files moved to `.srachka/` (config, runs, logs, schemas, tasks). Task files gitignored — no more dirty repo from creating tasks. | 2026-03-25 | 2026-03-25 |
 
+## Backlog
+
+| Status | Feature | Description | Task | Created |
+|--------|---------|-------------|------|---------|
+| [ ] | Worktree isolation | srachka автоматически создаёт git worktree при запуске — вся работа в изоляции, юзер может продолжать работать | [worktree-isolation.md](.srachka/tasks/worktree-isolation.md) | 2026-03-25 |
+| [ ] | Unified task+plan file | Таск и план живут в одном .md файле — план дописывается после разделителя, прогресс через чекбоксы | [unified-task-plan-file.md](.srachka/tasks/unified-task-plan-file.md) | 2026-03-25 |
+
 ## Lives in the orchestrator prompt (not code)
 
 Эти фичи — инструкции в MD-промпте из `srachka init`:
