@@ -12,6 +12,7 @@ from .prompts import diff_review_prompt, fix_prompt, implementation_brief, plan_
 from .providers import ClaudeProvider, CodexProvider, ProviderMeta, ProviderResult
 from .shell import CommandError, CommandTimeout
 from .state import REVIEW_HISTORY_FILE_NAME, STEP_REVIEWS_FILE_NAME, point_latest, save_run_state
+from .task_file import write_plan_to_task
 from .utils import append_jsonl
 
 
@@ -223,7 +224,7 @@ class Orchestrator:
                 f"Claude error:\n{fallback_exc}"
             ) from fallback_exc
 
-    def debate_plan(self, task: str) -> RunState:
+    def debate_plan(self, task: str, task_file_path: Path | None = None) -> RunState:
         self._ensure_clean_repo()
         run_dir = self.create_run_dir()
         self._flog(f"=== DEBATE PLAN START ===\nrun_id: {run_dir.name}\ntask: {task}")
@@ -280,6 +281,16 @@ class Orchestrator:
         implementation_text = implementation_brief(state)
         save_run_state(run_dir, state, implementation_text)
         point_latest(self.runs_root, run_dir)
+
+        if task_file_path is not None:
+            write_plan_to_task(
+                task_file_path,
+                final_plan.steps,
+                run_id=run_dir.name,
+                work_repo=str(self.work_root),
+                status=final_review.status,
+            )
+
         _log(f"Run saved: {run_dir.name}")
         self._flog(f"=== DEBATE PLAN END ===\nrun saved: {run_dir.name}\nfinal status: {final_review.status}\nsteps: {len(final_plan.steps)}")
         return state
