@@ -21,6 +21,7 @@
 | [ ] | Worktree isolation | srachka автоматически создаёт git worktree при запуске — вся работа в изоляции, юзер может продолжать работать | [worktree-isolation.md](.srachka/tasks/worktree-isolation.md) | 2026-03-25 |
 | [ ] | Unified task+plan file | Таск и план живут в одном .md файле — план дописывается после разделителя, прогресс через чекбоксы | [unified-task-plan-file.md](.srachka/tasks/unified-task-plan-file.md) | 2026-03-25 |
 | [x] | Fix commit messages | Auto-commit убирает дублирование `Step N: Step N:` — strip prefix перед форматированием. | | 2026-03-26 |
+| [ ] | Srachka Autopilot | Интерактивный запуск: выбор задания из `.srachka/tasks/`, 3 режима автономности (Хуяч / Покажи план / Полный контроль), авто-коммиты всегда | [srachka-autopilot.md](.srachka/tasks/srachka-autopilot.md) | 2026-03-26 |
 
 ## Lives in the orchestrator prompt (not code)
 
