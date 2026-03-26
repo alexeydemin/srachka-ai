@@ -189,5 +189,171 @@ class TimeoutTests(unittest.TestCase):
             self.assertEqual(record["review"]["status"], "reject")
 
 
+class TaskFileIntegrationTests(unittest.TestCase):
+    """Tests for orchestrator writing plan / marking steps in task files."""
+
+    def _make_orchestrator(self, tmp_path: Path) -> Orchestrator:
+        runs_root = tmp_path / "runs"
+        runs_root.mkdir(parents=True, exist_ok=True)
+        orch = Orchestrator(tmp_path, tmp_path, DEFAULT_CONFIG, tmp_path, runs_root)
+        return orch
+
+    def _plan_result(self, steps: list[str]) -> ProviderResult:
+        return ProviderResult(
+            data={
+                "status": "draft",
+                "summary": "plan",
+                "steps": steps,
+                "risks": [],
+                "open_questions": [],
+            },
+            meta=ProviderMeta(provider="Claude"),
+        )
+
+    def _review_approved(self) -> ProviderResult:
+        return ProviderResult(
+            data={
+                "status": "approved",
+                "summary": "looks good",
+                "issues": [],
+                "requested_changes": [],
+                "question_for_user": None,
+            },
+            meta=ProviderMeta(provider="Codex"),
+        )
+
+    def test_debate_plan_writes_to_task_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            tf = tmp_path / "task.md"
+            tf.write_text("# My Task\n\nDo something.\n")
+
+            orch = self._make_orchestrator(tmp_path)
+
+            with mock.patch.object(orch, "_ensure_clean_repo"):
+                with mock.patch.object(orch.claude, "ask_json", return_value=self._plan_result(["step A", "step B"])):
+                    with mock.patch.object(orch.codex, "ask_json", return_value=self._review_approved()):
+                        state = orch.debate_plan("# My Task\n\nDo something.\n", task_file_path=tf)
+
+            content = tf.read_text()
+            from srachka_ai.task_file import SEPARATOR, read_task_plan, read_task_metadata
+            self.assertIn(SEPARATOR, content)
+            steps = read_task_plan(tf)
+            self.assertEqual(len(steps), 2)
+            self.assertEqual(steps[0].text, "step A")
+            self.assertFalse(steps[0].done)
+            meta = read_task_metadata(tf)
+            self.assertEqual(meta.run_id, state.run_id)
+            self.assertEqual(meta.status, "approved")
+
+    def test_debate_plan_without_task_file_does_not_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            orch = self._make_orchestrator(tmp_path)
+
+            with mock.patch.object(orch, "_ensure_clean_repo"):
+                with mock.patch.object(orch.claude, "ask_json", return_value=self._plan_result(["s1"])):
+                    with mock.patch.object(orch.codex, "ask_json", return_value=self._review_approved()):
+                        state = orch.debate_plan("task text", task_file_path=None)
+
+            self.assertEqual(state.plan.steps, ["s1"])
+
+    def test_do_step_marks_task_file_on_accept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            run_dir = tmp_path / "runs" / "run_tf"
+            run_dir.mkdir(parents=True)
+
+            tf = tmp_path / "task.md"
+            tf.write_text("# Task\n\nBody\n")
+            from srachka_ai.task_file import write_plan_to_task, read_task_plan
+            write_plan_to_task(tf, ["step 1", "step 2"], "run_tf", str(tmp_path))
+
+            orch = self._make_orchestrator(tmp_path)
+            orch._log_file = tmp_path / "test.log"
+            orch._log_file.touch()
+
+            state = RunState(
+                task="task",
+                run_id="run_tf",
+                work_repo=str(tmp_path),
+                current_step_index=0,
+                plan=PlanDraft(status="approved", summary="s", steps=["step 1", "step 2"], risks=[], open_questions=[]),
+                final_plan_review=PlanReview(
+                    status="approved", summary="ok", issues=[], requested_changes=[], question_for_user=None,
+                ),
+            )
+
+            accept_review = ProviderResult(
+                data={
+                    "status": "accept",
+                    "summary": "done",
+                    "issues": [],
+                    "required_fixes": [],
+                    "done_enough": True,
+                },
+                meta=ProviderMeta(provider="Codex"),
+            )
+
+            with mock.patch.object(orch, "_ensure_clean_repo"):
+                with mock.patch.object(orch.claude, "implement", return_value=(ProviderMeta(provider="Claude"), "ok")):
+                    with mock.patch.object(orch, "_raw_git_diff", return_value="diff --git a/file"):
+                        with mock.patch.object(orch.codex, "ask_json", return_value=accept_review):
+                            with mock.patch.object(orch, "_auto_commit"):
+                                review = orch.do_step(state, run_dir, task_file_path=tf)
+
+            self.assertEqual(review.status, "accept")
+            steps = read_task_plan(tf)
+            self.assertTrue(steps[0].done)
+            self.assertFalse(steps[1].done)
+
+    def test_do_step_does_not_mark_on_reject(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            run_dir = tmp_path / "runs" / "run_rej"
+            run_dir.mkdir(parents=True)
+
+            tf = tmp_path / "task.md"
+            tf.write_text("# Task\n\nBody\n")
+            from srachka_ai.task_file import write_plan_to_task, read_task_plan
+            write_plan_to_task(tf, ["step 1"], "run_rej", str(tmp_path))
+
+            orch = self._make_orchestrator(tmp_path)
+            orch._log_file = tmp_path / "test.log"
+            orch._log_file.touch()
+
+            state = RunState(
+                task="task",
+                run_id="run_rej",
+                work_repo=str(tmp_path),
+                current_step_index=0,
+                plan=PlanDraft(status="approved", summary="s", steps=["step 1"], risks=[], open_questions=[]),
+                final_plan_review=PlanReview(
+                    status="approved", summary="ok", issues=[], requested_changes=[], question_for_user=None,
+                ),
+            )
+
+            reject_review = ProviderResult(
+                data={
+                    "status": "reject",
+                    "summary": "bad",
+                    "issues": [{"severity": "high", "message": "broken"}],
+                    "required_fixes": ["fix it"],
+                    "done_enough": False,
+                },
+                meta=ProviderMeta(provider="Codex"),
+            )
+
+            with mock.patch.object(orch, "_ensure_clean_repo"):
+                with mock.patch.object(orch.claude, "implement", return_value=(ProviderMeta(provider="Claude"), "ok")):
+                    with mock.patch.object(orch, "_raw_git_diff", return_value="diff --git a/file"):
+                        with mock.patch.object(orch.codex, "ask_json", return_value=reject_review):
+                            review = orch.do_step(state, run_dir, task_file_path=tf)
+
+            self.assertEqual(review.status, "reject")
+            steps = read_task_plan(tf)
+            self.assertFalse(steps[0].done)
+
+
 if __name__ == "__main__":
     unittest.main()
