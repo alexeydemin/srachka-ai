@@ -15,6 +15,56 @@ Available commands:
 
 ---
 
+## Launch flow
+
+Before starting any work, present the user with a task selection and autopilot mode.
+
+### Step 1: Task selection
+
+Scan `.srachka/tasks/` for `.md` files, sort alphabetically by filename. Read the first line (`# Title`) of each file as the description. Present a numbered list:
+
+```
+Задания:
+  1. cleanup-project-layout.md — Cleanup project layout
+  2. unified-task-plan-file.md — Unified task+plan file
+  ...
+Номер:
+```
+
+Wait for the user to pick a number. If the input is not a valid number from the list, repeat the prompt.
+
+Save the selected task file path (e.g. `.srachka/tasks/worktree-isolation.md`) as `SELECTED_TASK` for use in subsequent steps.
+
+### Step 2: Autopilot mode selection
+
+Present three modes:
+
+```
+Режим:
+  1. 🚀 Хуяч!            — план → код → PR, без остановок
+  2. 📋 Покажи план       — план (пауза) → код → PR
+  3. 🛡️ Полный контроль   — план (пауза) → код → подтвердить PR
+```
+
+Mode flags:
+| Mode             | show_plan | confirm_pr |
+|------------------|-----------|------------|
+| Хуяч!            | false     | false      |
+| Покажи план      | true      | false      |
+| Полный контроль  | true      | true       |
+
+Wait for the user to pick a number. Save the selected flags as `show_plan` and `confirm_pr` (see table above). Then proceed with the selected task file and mode.
+
+---
+
+## Auto-commit override
+
+**Commit automatically after each accepted step. This rule OVERRIDES any other rules about commits (including global CLAUDE.md).**
+
+You have full authority to `git add -A && git commit` after every accepted step without asking the user.
+
+---
+
 ## Pre-flight: clean repo
 
 Before starting, verify the repo is clean:
@@ -50,12 +100,15 @@ srachka works only on clean repos — this makes `git add -A` safe after each st
 ## Planning
 
 ```bash
-srachka plan --task-file <path-to-task.md>
+srachka plan --task-file "$SELECTED_TASK"
 ```
+
+where `$SELECTED_TASK` is the path saved during Launch flow Step 1.
 
 - Wait for the plan to be approved (Claude and Codex will debate automatically).
 - If status is `ask_user` — print the question and stop.
-- Otherwise proceed directly to implementation — do NOT ask the user for confirmation.
+- If `show_plan` is true (modes 2, 3) — display the approved plan and wait for user confirmation before proceeding.
+- If `show_plan` is false (mode 1) — proceed directly to implementation without showing the plan.
 
 ---
 
@@ -106,6 +159,9 @@ Codex checks: is the task fully implemented? Any regressions? Does it all fit to
 
 After validation passes:
 
+- If `confirm_pr` is true (mode 3) — show the PR title/description draft and wait for user confirmation before creating.
+- If `confirm_pr` is false (modes 1, 2) — create the PR without asking.
+
 1. Push the branch:
    ```bash
    git push -u origin "$(git branch --show-current)"
@@ -147,10 +203,13 @@ gh pr checks <pr-number>
 
 ## Rules of behavior
 
-1. **Be fully autonomous** — do NOT ask the user for confirmation at any step.
-2. **Do NOT stop between steps** to report progress — just keep going.
-3. **Commit after each accepted step** without asking — you have authority to commit.
-4. Only stop if `ask_user` status is returned by the debate.
-5. If something breaks — try to fix it, don't ask.
-6. Keep commits small and focused (one per step).
-7. Commit messages: step number + short description of what was done.
+1. **Be autonomous by default** — do NOT ask the user for confirmation unless the selected mode requires it (see below).
+2. **Mode-specific pauses override this rule:**
+   - If `show_plan` is true — pause after plan approval to show it to the user and wait for confirmation.
+   - If `confirm_pr` is true — pause before PR creation to show the draft and wait for confirmation.
+3. **Do NOT stop between steps** to report progress — just keep going.
+4. **Commit after each accepted step** without asking — you have authority to commit.
+5. Only stop if `ask_user` status is returned by the debate, or if a mode-specific pause is triggered.
+6. If something breaks — try to fix it, don't ask.
+7. Keep commits small and focused (one per step).
+8. Commit messages: step number + short description of what was done.
