@@ -12,7 +12,7 @@ from .prompts import diff_review_prompt, fix_prompt, implementation_brief, plan_
 from .providers import ClaudeProvider, CodexProvider, ProviderMeta, ProviderResult
 from .shell import CommandError, CommandTimeout
 from .state import REVIEW_HISTORY_FILE_NAME, STEP_REVIEWS_FILE_NAME, point_latest, save_run_state
-from .task_file import write_plan_to_task
+from .task_file import mark_step_done, write_plan_to_task
 from .utils import append_jsonl
 
 
@@ -333,7 +333,7 @@ class Orchestrator:
             done_enough=False,
         )
 
-    def do_step(self, state: RunState, run_dir: Path) -> DiffReview | None:
+    def do_step(self, state: RunState, run_dir: Path, task_file_path: Path | None = None) -> DiffReview | None:
         if state.current_step is None:
             return None
         self._ensure_clean_repo()
@@ -422,6 +422,8 @@ class Orchestrator:
 
         if final_review is not None and final_review.status == "accept":
             self._auto_commit(state)
+            if task_file_path is not None:
+                mark_step_done(task_file_path, step_index)
 
         self._flog(f"=== DO STEP {step_index + 1} END === status: {final_review.status if final_review else 'None'}")
         return final_review
