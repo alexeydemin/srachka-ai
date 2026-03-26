@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -415,8 +416,10 @@ class Orchestrator:
         return final_review
 
     def _auto_commit(self, state: RunState) -> None:
+        raw = state.current_step or "unknown step"
+        # Strip "Step N: " prefix if present to avoid duplication
+        description = re.sub(r"^Step\s+\d+:\s*", "", raw)[:70].replace("\n", " ")
         step_num = state.current_step_index + 1
-        description = (state.current_step or "unknown step")[:70].replace("\n", " ")
         message = f"Step {step_num}: {description}"
         self._flog(f"Auto-committing: {message}")
         subprocess.run(
