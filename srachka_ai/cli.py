@@ -210,11 +210,13 @@ def cmd_show_step(args: argparse.Namespace) -> int:
     work_repo = Path.cwd().resolve()
     if getattr(args, "task_file", None):
         task_file_path = _resolve_task_file(args.task_file, work_repo)
-        steps = read_task_plan(task_file_path)
         meta = read_task_metadata(task_file_path)
+        if not meta.run_id:
+            raise CliError("Task file has no plan yet. Run 'srachka plan --task-file ...' first.")
+        steps = read_task_plan(task_file_path)
         cur = get_current_step_index(steps)
         total = len(steps)
-        print(f"Run ID: {meta.run_id or 'N/A'}")
+        print(f"Run ID: {meta.run_id}")
         print(f"Work repo: {meta.work_repo or 'N/A'}")
         if cur is not None:
             print(f"Current step index: {cur + 1}/{total}")
