@@ -17,6 +17,13 @@ from .prompts import implementation_brief
 from .providers import CLAUDE_AUTH_ENV_VARS, claude_env_overrides, codex_env_overrides
 from .shell import run_command
 from .state import read_run_state, resolve_latest_run_dir, save_run_state
+from .task_file import (
+    get_current_step_index,
+    mark_step_done as tf_mark_step_done,
+    read_task_metadata,
+    read_task_plan,
+    read_task_text,
+)
 
 
 class CliError(RuntimeError):
@@ -118,11 +125,64 @@ def _resolve_task_file(task_file_arg: str, work_repo: Path) -> Path:
     raise CliError("\n".join(message_lines))
 
 
+def _resolve_state_from_task_file(task_file_path: Path, runs_root: Path) -> tuple[Path, "RunState"]:
+    """Load RunState using task file as source of truth for plan/progress.
+
+    Returns (run_dir, state).  Recreates run_dir if missing.
+    """
+    from .models import PlanDraft, PlanReview, RunState
+
+    meta = read_task_metadata(task_file_path)
+    if not meta.run_id:
+        raise CliError("Task file has no plan yet. Run 'srachka plan --task-file ...' first.")
+
+    steps_data = read_task_plan(task_file_path)
+    step_texts = [s.text for s in steps_data]
+    current_idx = get_current_step_index(steps_data)
+    if current_idx is None:
+        current_idx = len(step_texts)
+
+    run_dir = runs_root / meta.run_id
+    if run_dir.is_dir():
+        state = read_run_state(run_dir)
+        state.plan.steps = step_texts
+        state.current_step_index = current_idx
+    else:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        task_body = read_task_text(task_file_path)
+        state = RunState(
+            task=task_body,
+            run_id=meta.run_id,
+            work_repo=meta.work_repo or str(Path.cwd()),
+            current_step_index=current_idx,
+            plan=PlanDraft(
+                status="approved",
+                summary="Recovered from task file",
+                steps=step_texts,
+                risks=[],
+                open_questions=[],
+            ),
+            final_plan_review=PlanReview(
+                status="approved",
+                summary="Recovered from task file",
+                issues=[],
+                requested_changes=[],
+                question_for_user=None,
+            ),
+        )
+        save_run_state(run_dir, state, implementation_brief(state))
+        from .state import point_latest
+        point_latest(runs_root, run_dir)
+
+    return run_dir, state
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     work_repo = Path(args.work_repo).resolve() if args.work_repo else Path.cwd().resolve()
     _, orchestrator, _ = _build_orchestrator(work_repo)
-    task = _resolve_task_file(args.task_file, work_repo).read_text(encoding="utf-8")
-    state = orchestrator.debate_plan(task)
+    task_file_path = _resolve_task_file(args.task_file, work_repo)
+    task = read_task_text(task_file_path)
+    state = orchestrator.debate_plan(task, task_file_path=task_file_path)
     print(f"Run ID: {state.run_id}")
     print(f"Work repo: {state.work_repo}")
     print(f"Plan review status: {state.final_plan_review.status}")
@@ -131,21 +191,48 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 
 def cmd_show_step(args: argparse.Namespace) -> int:
-    _, _, runs_root = _build_orchestrator()
-    run_dir = resolve_latest_run_dir(runs_root)
-    state = read_run_state(run_dir)
-    print(f"Run ID: {state.run_id}")
-    print(f"Work repo: {state.work_repo}")
-    print(f"Current step index: {_format_step_progress(state.current_step_index, len(state.plan.steps))}")
-    print(state.current_step or "All steps complete")
+    work_repo = Path.cwd().resolve()
+    if getattr(args, "task_file", None):
+        task_file_path = _resolve_task_file(args.task_file, work_repo)
+        steps = read_task_plan(task_file_path)
+        meta = read_task_metadata(task_file_path)
+        cur = get_current_step_index(steps)
+        total = len(steps)
+        print(f"Run ID: {meta.run_id or 'N/A'}")
+        print(f"Work repo: {meta.work_repo or 'N/A'}")
+        if cur is not None:
+            print(f"Current step index: {cur + 1}/{total}")
+            print(steps[cur].text)
+        else:
+            print(f"Current step index: {total}/{total}")
+            print("All steps complete")
+    else:
+        _, _, runs_root = _build_orchestrator()
+        run_dir = resolve_latest_run_dir(runs_root)
+        state = read_run_state(run_dir)
+        print(f"Run ID: {state.run_id}")
+        print(f"Work repo: {state.work_repo}")
+        print(f"Current step index: {_format_step_progress(state.current_step_index, len(state.plan.steps))}")
+        print(state.current_step or "All steps complete")
     return 0
 
 
 def cmd_next_step(args: argparse.Namespace) -> int:
+    work_repo = Path.cwd().resolve()
     _, _, runs_root = _build_orchestrator()
-    run_dir = resolve_latest_run_dir(runs_root)
-    state = read_run_state(run_dir)
-    state.current_step_index = min(state.current_step_index + 1, len(state.plan.steps))
+
+    if getattr(args, "task_file", None):
+        task_file_path = _resolve_task_file(args.task_file, work_repo)
+        run_dir, state = _resolve_state_from_task_file(task_file_path, runs_root)
+        old_index = state.current_step_index
+        if old_index < len(state.plan.steps):
+            tf_mark_step_done(task_file_path, old_index)
+        state.current_step_index = min(old_index + 1, len(state.plan.steps))
+    else:
+        run_dir = resolve_latest_run_dir(runs_root)
+        state = read_run_state(run_dir)
+        state.current_step_index = min(state.current_step_index + 1, len(state.plan.steps))
+
     save_run_state(run_dir, state, implementation_brief(state))
     print(f"Advanced to step index: {_format_step_progress(state.current_step_index, len(state.plan.steps))}")
     print(state.current_step or "All steps complete")
@@ -154,8 +241,15 @@ def cmd_next_step(args: argparse.Namespace) -> int:
 
 def cmd_review_diff(args: argparse.Namespace) -> int:
     _, _, runs_root = _build_orchestrator()
-    run_dir = resolve_latest_run_dir(runs_root)
-    state = read_run_state(run_dir)
+
+    if getattr(args, "task_file", None):
+        work_repo = Path.cwd().resolve()
+        task_file_path = _resolve_task_file(args.task_file, work_repo)
+        _, state = _resolve_state_from_task_file(task_file_path, runs_root)
+    else:
+        run_dir = resolve_latest_run_dir(runs_root)
+        state = read_run_state(run_dir)
+
     _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
     orchestrator.attach_log(state.run_id)
 
@@ -175,8 +269,16 @@ def cmd_review_diff(args: argparse.Namespace) -> int:
 def cmd_do_step(args: argparse.Namespace) -> int:
     try:
         _, _, runs_root = _build_orchestrator()
-        run_dir = resolve_latest_run_dir(runs_root)
-        state = read_run_state(run_dir)
+        task_file_path: Path | None = None
+
+        if getattr(args, "task_file", None):
+            work_repo = Path.cwd().resolve()
+            task_file_path = _resolve_task_file(args.task_file, work_repo)
+            run_dir, state = _resolve_state_from_task_file(task_file_path, runs_root)
+        else:
+            run_dir = resolve_latest_run_dir(runs_root)
+            state = read_run_state(run_dir)
+
         _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
         orchestrator.attach_log(state.run_id)
 
@@ -185,7 +287,7 @@ def cmd_do_step(args: argparse.Namespace) -> int:
             return 0
 
         print(f"Step {_format_step_progress(state.current_step_index, len(state.plan.steps))}: {state.current_step}")
-        review = orchestrator.do_step(state, run_dir)
+        review = orchestrator.do_step(state, run_dir, task_file_path=task_file_path)
 
         if review is None:
             print("All steps complete.")
@@ -328,16 +430,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.set_defaults(func=cmd_plan)
 
     p_show = sub.add_parser("show-step", help="Show current step")
+    p_show.add_argument("--task-file", help="Path to a markdown task file (source of truth)")
     p_show.set_defaults(func=cmd_show_step)
 
     p_next = sub.add_parser("next-step", help="Advance to next step")
+    p_next.add_argument("--task-file", help="Path to a markdown task file (source of truth)")
     p_next.set_defaults(func=cmd_next_step)
 
     p_review = sub.add_parser("review-diff", help="Ask Codex to review current diff")
+    p_review.add_argument("--task-file", help="Path to a markdown task file (source of truth)")
     p_review.add_argument("--stdin-diff", action="store_true", help="Read diff from stdin instead of running git diff")
     p_review.set_defaults(func=cmd_review_diff)
 
     p_do = sub.add_parser("do-step", help="Implement current step with Claude, review with Codex")
+    p_do.add_argument("--task-file", help="Path to a markdown task file (source of truth)")
     p_do.set_defaults(func=cmd_do_step)
 
     p_init = sub.add_parser("init", help="Print the orchestrator prompt for Claude")
