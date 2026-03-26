@@ -421,9 +421,9 @@ class Orchestrator:
             self._flog(f"Step {step_index + 1} attempt {round_index} status: reject — {blocking} blocking issues")
 
         if final_review is not None and final_review.status == "accept":
-            self._auto_commit(state)
             if task_file_path is not None:
                 mark_step_done(task_file_path, step_index)
+            self._auto_commit(state)
 
         self._flog(f"=== DO STEP {step_index + 1} END === status: {final_review.status if final_review else 'None'}")
         return final_review

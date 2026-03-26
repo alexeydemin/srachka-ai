@@ -152,11 +152,15 @@ def _resolve_state_from_task_file(task_file_path: Path, runs_root: Path) -> tupl
         except Exception:
             state = None
 
+    plan_status = meta.status or "approved"
+
     if state is not None:
         # Refresh all task-file-owned fields from task file (source of truth)
         state.plan.steps = step_texts
+        state.plan.status = plan_status
         state.current_step_index = current_idx
         state.task = task_body
+        state.final_plan_review.status = plan_status
         if meta.work_repo:
             state.work_repo = meta.work_repo
     else:
@@ -168,14 +172,14 @@ def _resolve_state_from_task_file(task_file_path: Path, runs_root: Path) -> tupl
             work_repo=meta.work_repo or str(Path.cwd()),
             current_step_index=current_idx,
             plan=PlanDraft(
-                status="approved",
+                status=plan_status,
                 summary="Recovered from task file",
                 steps=step_texts,
                 risks=[],
                 open_questions=[],
             ),
             final_plan_review=PlanReview(
-                status="approved",
+                status=plan_status,
                 summary="Recovered from task file",
                 issues=[],
                 requested_changes=[],
