@@ -6,11 +6,11 @@ Install: `pipx install -e ~/personal/ai_srachka`
 
 Available commands:
 - `srachka plan --task-file <path>` — run plan debate (Claude proposes, Codex reviews)
-- `srachka show-step` — show the current step
-- `srachka next-step` — advance to next step
-- `srachka review-diff` — ask Codex to review the current diff
+- `srachka show-step --task-file <path>` — show the current step
+- `srachka next-step --task-file <path>` — advance to next step
+- `srachka review-diff --task-file <path>` — ask Codex to review the current diff
 - `srachka review-diff --stdin-diff` — review a diff piped via stdin
-- `srachka do-step` — implement current step (Claude implements, Codex reviews, auto-fix loop)
+- `srachka do-step --task-file <path>` — implement current step (Claude implements, Codex reviews, auto-fix loop)
 - `srachka doctor` — show auth diagnostics
 
 ---
@@ -21,7 +21,14 @@ Before starting any work, present the user with a task selection and autopilot m
 
 ### Step 1: Task selection
 
-Scan `.srachka/tasks/` for `.md` files, sort alphabetically by filename. Read the first line (`# Title`) of each file as the description. Present a numbered list:
+Scan `.srachka/tasks/` for `.md` files. Filter out already completed tasks using `CHANGELOG.md`:
+
+1. Read `CHANGELOG.md`
+2. Find all lines containing `[x]` — these are completed features
+3. For each task file, check if its filename appears in any `[x]` line in CHANGELOG
+4. Only show tasks whose filename does NOT appear in any `[x]` line
+
+Sort remaining tasks alphabetically by filename. Read the first line (`# Title`) of each file as the description. Present a numbered list:
 
 ```
 Задания:
@@ -117,16 +124,16 @@ where `$SELECTED_TASK` is the path saved during Launch flow Step 1.
 For each step:
 
 ```bash
-srachka do-step
+srachka do-step --task-file "$SELECTED_TASK"
 ```
 
 This runs the full cycle: Claude implements → Codex reviews → auto-fix if needed.
 
 Alternatively, use the manual flow:
-1. `srachka show-step` — read the current step
+1. `srachka show-step --task-file "$SELECTED_TASK"` — read the current step
 2. Implement the step yourself
-3. `srachka review-diff` — let Codex review
-4. `srachka next-step` — advance after acceptance
+3. `srachka review-diff --task-file "$SELECTED_TASK"` — let Codex review
+4. `srachka next-step --task-file "$SELECTED_TASK"` — advance after acceptance
 
 After each accepted step, changes are auto-committed (commit-per-step).
 Commit without asking the user — you have full authority to commit.
@@ -144,7 +151,7 @@ for b in main master develop; do
     BASE="$b"; break
   fi
 done
-git diff "$BASE"...HEAD | srachka review-diff --stdin-diff
+git diff "$BASE"...HEAD | srachka review-diff --task-file "$SELECTED_TASK" --stdin-diff
 ```
 
 Codex checks: is the task fully implemented? Any regressions? Does it all fit together?
@@ -185,7 +192,7 @@ gh pr checks <pr-number>
 - If checks fail:
   1. Read the CI logs
   2. Fix the issue
-  3. Run `srachka review-diff` on the fix
+  3. Run `srachka review-diff --task-file "$SELECTED_TASK"` on the fix
   4. Commit and push
   5. Re-check CI
 - Repeat until all checks pass.
