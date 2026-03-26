@@ -142,14 +142,26 @@ def _resolve_state_from_task_file(task_file_path: Path, runs_root: Path) -> tupl
     if current_idx is None:
         current_idx = len(step_texts)
 
+    task_body = read_task_text(task_file_path)
     run_dir = runs_root / meta.run_id
+    state: RunState | None = None
+
     if run_dir.is_dir():
-        state = read_run_state(run_dir)
+        try:
+            state = read_run_state(run_dir)
+        except Exception:
+            state = None
+
+    if state is not None:
+        # Refresh all task-file-owned fields from task file (source of truth)
         state.plan.steps = step_texts
         state.current_step_index = current_idx
+        state.task = task_body
+        if meta.work_repo:
+            state.work_repo = meta.work_repo
     else:
+        # Rebuild from task file — run dir missing or state.json corrupted
         run_dir.mkdir(parents=True, exist_ok=True)
-        task_body = read_task_text(task_file_path)
         state = RunState(
             task=task_body,
             run_id=meta.run_id,
