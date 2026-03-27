@@ -33,6 +33,9 @@ class TaskMetadata:
     status: str | None = None
     run_id: str | None = None
     work_repo: str | None = None
+    worktree_path: str | None = None
+    worktree_branch: str | None = None
+    base_branch: str | None = None
 
 
 def read_task_text(path: Path) -> str:
@@ -65,6 +68,9 @@ def read_task_metadata(path: Path) -> TaskMetadata:
                 status=pairs.get("status"),
                 run_id=pairs.get("run_id"),
                 work_repo=pairs.get("work_repo"),
+                worktree_path=pairs.get("worktree_path"),
+                worktree_branch=pairs.get("worktree_branch"),
+                base_branch=pairs.get("base_branch"),
             )
     return TaskMetadata()
 
@@ -99,6 +105,9 @@ def write_plan_to_task(
     run_id: str,
     work_repo: str,
     status: str = "approved",
+    worktree_path: str | None = None,
+    worktree_branch: str | None = None,
+    base_branch: str | None = None,
 ) -> None:
     """Write or replace the plan section in the task file."""
     content = path.read_text(encoding="utf-8")
@@ -108,7 +117,14 @@ def write_plan_to_task(
     else:
         body = content[:idx].rstrip("\n")
 
-    meta_line = f"<!-- status: {status} | run_id: {run_id} | work_repo: {work_repo} -->"
+    meta_parts = [f"status: {status}", f"run_id: {run_id}", f"work_repo: {work_repo}"]
+    if worktree_path:
+        meta_parts.append(f"worktree_path: {worktree_path}")
+    if worktree_branch:
+        meta_parts.append(f"worktree_branch: {worktree_branch}")
+    if base_branch:
+        meta_parts.append(f"base_branch: {base_branch}")
+    meta_line = f"<!-- {' | '.join(meta_parts)} -->"
     checklist = "\n".join(f"- [ ] {step}" for step in steps)
     plan_section = f"\n\n{SEPARATOR}\n{meta_line}\n\n{checklist}\n"
     path.write_text(body + plan_section, encoding="utf-8")
