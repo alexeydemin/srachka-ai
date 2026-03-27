@@ -14,6 +14,7 @@ from .shell import CommandError, CommandTimeout
 from .state import REVIEW_HISTORY_FILE_NAME, STEP_REVIEWS_FILE_NAME, point_latest, save_run_state
 from .task_file import mark_step_done, write_plan_to_task
 from .utils import append_jsonl
+from .worktree import create_worktree, get_current_branch, resolve_git_toplevel, verify_worktree
 
 
 def _ts() -> str:
@@ -89,6 +90,12 @@ class Orchestrator:
         with self._log_file.open("a") as f:
             f.write(f"[{ts}] {message}\n")
             f.flush()
+
+    def _switch_work_root(self, new_path: Path) -> None:
+        """Switch all providers and self to a new work directory."""
+        self.work_root = new_path
+        self.claude = ClaudeProvider(self.config, new_path)
+        self.codex = CodexProvider(self.config, new_path, self.schema_dir)
 
     def _ensure_clean_repo(self) -> None:
         result = subprocess.run(
@@ -226,8 +233,19 @@ class Orchestrator:
 
     def debate_plan(self, task: str, task_file_path: Path | None = None) -> RunState:
         self._ensure_clean_repo()
+
+        # Capture base branch and create worktree
+        git_root = resolve_git_toplevel(self.work_root)
+        base_branch = get_current_branch(self.work_root)
+        original_work_repo = str(git_root)
+
         run_dir = self.create_run_dir()
-        self._flog(f"=== DEBATE PLAN START ===\nrun_id: {run_dir.name}\ntask: {task}")
+        worktree_branch = f"srachka/{run_dir.name}"
+        worktree_path = create_worktree(git_root, worktree_branch)
+        self._switch_work_root(worktree_path)
+        _log(f"Worktree: {worktree_path}")
+
+        self._flog(f"=== DEBATE PLAN START ===\nrun_id: {run_dir.name}\ntask: {task}\nworktree: {worktree_path}")
         review_path = run_dir / REVIEW_HISTORY_FILE_NAME
         previous_review: PlanReview | None = None
         final_plan: PlanDraft | None = None
@@ -272,11 +290,14 @@ class Orchestrator:
         state = RunState(
             task=task,
             run_id=run_dir.name,
-            work_repo=str(self.work_root),
+            work_repo=original_work_repo,
             current_step_index=0,
             plan=final_plan,
             final_plan_review=final_review,
             review_history=review_history,
+            worktree_path=str(worktree_path),
+            worktree_branch=worktree_branch,
+            base_branch=base_branch,
         )
         implementation_text = implementation_brief(state)
         save_run_state(run_dir, state, implementation_text)
@@ -287,8 +308,11 @@ class Orchestrator:
                 task_file_path,
                 final_plan.steps,
                 run_id=run_dir.name,
-                work_repo=str(self.work_root),
+                work_repo=original_work_repo,
                 status=final_review.status,
+                worktree_path=str(worktree_path),
+                worktree_branch=worktree_branch,
+                base_branch=base_branch,
             )
 
         _log(f"Run saved: {run_dir.name}")
@@ -336,6 +360,17 @@ class Orchestrator:
     def do_step(self, state: RunState, run_dir: Path, task_file_path: Path | None = None) -> DiffReview | None:
         if state.current_step is None:
             return None
+
+        # Switch to worktree if present
+        if state.worktree_path:
+            wt = Path(state.worktree_path)
+            if not verify_worktree(wt):
+                raise RuntimeError(
+                    f"Worktree not found at {wt}.\n"
+                    "It may have been manually removed. Re-run 'srachka plan' to create a new one."
+                )
+            self._switch_work_root(wt)
+
         self._ensure_clean_repo()
 
         step_reviews_path = run_dir / STEP_REVIEWS_FILE_NAME
