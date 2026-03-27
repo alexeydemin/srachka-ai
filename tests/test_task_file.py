@@ -147,6 +147,34 @@ class MarkStepDoneTest(unittest.TestCase):
         self.assertEqual(path.read_text(), "# No plan\n")
 
 
+class WorktreeMetadataTest(unittest.TestCase):
+    def test_write_and_read_worktree_fields(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
+            f.write("# Task\n\nBody\n")
+            f.flush()
+            path = Path(f.name)
+        write_plan_to_task(
+            path, ["step 1"], "run_wt", "/repo",
+            worktree_path="/repo/.srachka/worktrees/srachka/run_wt",
+            worktree_branch="srachka/run_wt",
+            base_branch="main",
+        )
+        meta = read_task_metadata(path)
+        self.assertEqual(meta.worktree_path, "/repo/.srachka/worktrees/srachka/run_wt")
+        self.assertEqual(meta.worktree_branch, "srachka/run_wt")
+        self.assertEqual(meta.base_branch, "main")
+
+    def test_no_worktree_fields_returns_none(self) -> None:
+        content = f"# Task\n\n{SEPARATOR}\n<!-- status: approved | run_id: old -->\n\n- [ ] Step 1\n"
+        with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
+            f.write(content)
+            f.flush()
+            meta = read_task_metadata(Path(f.name))
+        self.assertIsNone(meta.worktree_path)
+        self.assertIsNone(meta.worktree_branch)
+        self.assertIsNone(meta.base_branch)
+
+
 class RoundTripTest(unittest.TestCase):
     def test_write_then_read(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:

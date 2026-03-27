@@ -199,6 +199,92 @@ class CmdShowStepTaskFileTest(unittest.TestCase):
             self.assertIn("All steps complete", stdout.getvalue())
 
 
+class ResolveStateWorktreeFieldsTest(unittest.TestCase):
+    def test_recovery_includes_worktree_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runs_root = tmp_path / "runs"
+            runs_root.mkdir()
+
+            tf = tmp_path / "task.md"
+            tf.write_text("# Task\n\nBody\n")
+            write_plan_to_task(
+                tf, ["step 1"], "run_wt", str(tmp_path),
+                worktree_path=str(tmp_path / "wt"),
+                worktree_branch="srachka/run_wt",
+                base_branch="main",
+            )
+
+            _, state = cli._resolve_state_from_task_file(tf, runs_root)
+
+            self.assertEqual(state.worktree_path, str(tmp_path / "wt"))
+            self.assertEqual(state.worktree_branch, "srachka/run_wt")
+            self.assertEqual(state.base_branch, "main")
+            self.assertEqual(state.active_work_root, str(tmp_path / "wt"))
+
+    def test_recovery_without_worktree_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runs_root = tmp_path / "runs"
+            runs_root.mkdir()
+
+            tf = tmp_path / "task.md"
+            tf.write_text("# Task\n\nBody\n")
+            write_plan_to_task(tf, ["step 1"], "run_no_wt", str(tmp_path))
+
+            _, state = cli._resolve_state_from_task_file(tf, runs_root)
+
+            self.assertIsNone(state.worktree_path)
+            self.assertIsNone(state.worktree_branch)
+            self.assertIsNone(state.base_branch)
+            self.assertEqual(state.active_work_root, str(tmp_path))
+
+
+class CmdMergeTest(unittest.TestCase):
+    def test_merge_errors_without_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runs_root = tmp_path / "runs"
+            runs_root.mkdir()
+
+            tf = tmp_path / "task.md"
+            tf.write_text("# Task\n\nBody\n")
+            write_plan_to_task(tf, ["step 1"], "run_merge_no_wt", str(tmp_path))
+
+            args = mock.Mock()
+            args.task_file = str(tf)
+
+            with mock.patch.object(cli, "_build_orchestrator") as mock_build:
+                mock_build.return_value = (tmp_path, mock.Mock(), runs_root)
+                with self.assertRaises(cli.CliError) as ctx:
+                    cli.cmd_merge(args)
+            self.assertIn("no worktree", str(ctx.exception).lower())
+
+    def test_merge_errors_on_missing_worktree_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runs_root = tmp_path / "runs"
+            runs_root.mkdir()
+
+            tf = tmp_path / "task.md"
+            tf.write_text("# Task\n\nBody\n")
+            write_plan_to_task(
+                tf, ["step 1"], "run_merge_missing", str(tmp_path),
+                worktree_path=str(tmp_path / "nonexistent_wt"),
+                worktree_branch="srachka/test",
+                base_branch="main",
+            )
+
+            args = mock.Mock()
+            args.task_file = str(tf)
+
+            with mock.patch.object(cli, "_build_orchestrator") as mock_build:
+                mock_build.return_value = (tmp_path, mock.Mock(), runs_root)
+                with self.assertRaises(cli.CliError) as ctx:
+                    cli.cmd_merge(args)
+            self.assertIn("not found", str(ctx.exception).lower())
+
+
 class CmdNextStepTaskFileTest(unittest.TestCase):
     def test_next_step_marks_done_and_advances(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
