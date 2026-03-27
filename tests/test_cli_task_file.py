@@ -13,7 +13,7 @@ from unittest import mock
 from srachka_ai import cli
 from srachka_ai.models import PlanDraft, PlanReview, RunState
 from srachka_ai.state import save_run_state
-from srachka_ai.task_file import SEPARATOR, write_plan_to_task
+from srachka_ai.task_file import SEPARATOR, read_task_metadata, write_plan_to_task
 
 
 class FormatStepProgressTest(unittest.TestCase):
@@ -221,6 +221,39 @@ class ResolveStateWorktreeFieldsTest(unittest.TestCase):
             self.assertEqual(state.worktree_branch, "srachka/run_wt")
             self.assertEqual(state.base_branch, "main")
             self.assertEqual(state.active_work_root, str(tmp_path / "wt"))
+
+    def test_clears_stale_worktree_fields_when_metadata_missing(self) -> None:
+        """After merge clears worktree from task file, state should have None."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runs_root = tmp_path / "runs"
+            run_dir = runs_root / "run_stale"
+            run_dir.mkdir(parents=True)
+
+            # State has worktree fields, but task file doesn't
+            old_state = RunState(
+                task="task", run_id="run_stale", work_repo=str(tmp_path),
+                current_step_index=0,
+                plan=PlanDraft(status="approved", summary="s", steps=["a"], risks=[], open_questions=[]),
+                final_plan_review=PlanReview(
+                    status="approved", summary="ok", issues=[], requested_changes=[], question_for_user=None,
+                ),
+                worktree_path="/old/wt",
+                worktree_branch="srachka/old",
+                base_branch="main",
+            )
+            save_run_state(run_dir, old_state, "brief")
+
+            tf = tmp_path / "task.md"
+            tf.write_text("# Task\n\nBody\n")
+            write_plan_to_task(tf, ["step 1"], "run_stale", str(tmp_path))
+            # No worktree fields in task file metadata
+
+            _, state = cli._resolve_state_from_task_file(tf, runs_root)
+
+            self.assertIsNone(state.worktree_path)
+            self.assertIsNone(state.worktree_branch)
+            self.assertIsNone(state.base_branch)
 
     def test_recovery_without_worktree_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

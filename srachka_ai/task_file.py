@@ -130,6 +130,46 @@ def write_plan_to_task(
     path.write_text(body + plan_section, encoding="utf-8")
 
 
+def _build_meta_line(meta: TaskMetadata) -> str:
+    """Build an HTML comment metadata line from a TaskMetadata object."""
+    parts = []
+    if meta.status:
+        parts.append(f"status: {meta.status}")
+    if meta.run_id:
+        parts.append(f"run_id: {meta.run_id}")
+    if meta.work_repo:
+        parts.append(f"work_repo: {meta.work_repo}")
+    if meta.worktree_path:
+        parts.append(f"worktree_path: {meta.worktree_path}")
+    if meta.worktree_branch:
+        parts.append(f"worktree_branch: {meta.worktree_branch}")
+    if meta.base_branch:
+        parts.append(f"base_branch: {meta.base_branch}")
+    return f"<!-- {' | '.join(parts)} -->"
+
+
+def update_task_metadata(path: Path, **updates: str | None) -> None:
+    """Update specific metadata fields in the task file, preserving steps.
+
+    Pass field=None to remove a field.
+    """
+    content = path.read_text(encoding="utf-8")
+    idx = content.find(SEPARATOR)
+    if idx == -1:
+        return
+    meta = read_task_metadata(path)
+    for key, value in updates.items():
+        if hasattr(meta, key):
+            setattr(meta, key, value)
+    after = content[idx + len(SEPARATOR):]
+    lines = after.split("\n")
+    for i, line in enumerate(lines):
+        if _META_RE.match(line.strip()):
+            lines[i] = _build_meta_line(meta)
+            break
+    path.write_text(content[:idx] + SEPARATOR + "\n".join(lines), encoding="utf-8")
+
+
 def mark_step_done(path: Path, step_index: int) -> None:
     """Change the Nth unchecked step from [ ] to [x]."""
     content = path.read_text(encoding="utf-8")

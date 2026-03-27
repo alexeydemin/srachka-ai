@@ -12,6 +12,7 @@ from srachka_ai.task_file import (
     read_task_metadata,
     read_task_plan,
     read_task_text,
+    update_task_metadata,
     write_plan_to_task,
 )
 
@@ -173,6 +174,46 @@ class WorktreeMetadataTest(unittest.TestCase):
         self.assertIsNone(meta.worktree_path)
         self.assertIsNone(meta.worktree_branch)
         self.assertIsNone(meta.base_branch)
+
+
+class UpdateTaskMetadataTest(unittest.TestCase):
+    def test_clears_worktree_fields(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
+            f.write("# Task\n\nBody\n")
+            f.flush()
+            path = Path(f.name)
+        write_plan_to_task(
+            path, ["step 1", "step 2"], "run_up", "/repo",
+            worktree_path="/repo/.srachka/wt",
+            worktree_branch="srachka/run_up",
+            base_branch="main",
+        )
+        # Verify worktree fields exist
+        meta = read_task_metadata(path)
+        self.assertIsNotNone(meta.worktree_path)
+
+        # Clear them
+        update_task_metadata(path, worktree_path=None, worktree_branch=None, base_branch=None)
+
+        meta2 = read_task_metadata(path)
+        self.assertIsNone(meta2.worktree_path)
+        self.assertIsNone(meta2.worktree_branch)
+        self.assertIsNone(meta2.base_branch)
+        # Other fields preserved
+        self.assertEqual(meta2.run_id, "run_up")
+        self.assertEqual(meta2.work_repo, "/repo")
+
+        # Steps preserved
+        steps = read_task_plan(path)
+        self.assertEqual(len(steps), 2)
+
+    def test_noop_without_separator(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
+            f.write("# No plan\n")
+            f.flush()
+            path = Path(f.name)
+        update_task_metadata(path, status="done")
+        self.assertEqual(path.read_text(), "# No plan\n")
 
 
 class RoundTripTest(unittest.TestCase):

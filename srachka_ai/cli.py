@@ -23,6 +23,7 @@ from .task_file import (
     read_task_metadata,
     read_task_plan,
     read_task_text,
+    update_task_metadata,
 )
 
 
@@ -163,12 +164,9 @@ def _resolve_state_from_task_file(task_file_path: Path, runs_root: Path) -> tupl
         state.final_plan_review.status = plan_status
         if meta.work_repo:
             state.work_repo = meta.work_repo
-        if meta.worktree_path:
-            state.worktree_path = meta.worktree_path
-        if meta.worktree_branch:
-            state.worktree_branch = meta.worktree_branch
-        if meta.base_branch:
-            state.base_branch = meta.base_branch
+        state.worktree_path = meta.worktree_path
+        state.worktree_branch = meta.worktree_branch
+        state.base_branch = meta.base_branch
     else:
         # Rebuild from task file — run dir missing or state.json corrupted
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -412,11 +410,19 @@ def cmd_merge(args: argparse.Namespace) -> int:
         cwd=str(git_root), capture_output=True,
     )
 
-    # Clear worktree fields in state
+    # Clear worktree fields in state and task file
     state.worktree_path = None
     state.worktree_branch = None
     state.base_branch = None
     save_run_state(run_dir, state, implementation_brief(state))
+
+    if getattr(args, "task_file", None):
+        update_task_metadata(
+            task_file_path,
+            worktree_path=None,
+            worktree_branch=None,
+            base_branch=None,
+        )
 
     print(f"Merged {state.run_id} into {current}")
     print(f"Worktree removed: {wt_path}")
