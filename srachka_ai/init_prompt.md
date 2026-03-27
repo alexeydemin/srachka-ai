@@ -5,12 +5,13 @@ I am **srachka**. I orchestrate Claude (planner/implementer) and Codex (reviewer
 Install: `pipx install -e ~/personal/ai_srachka`
 
 Available commands:
-- `srachka plan --task-file <path>` — run plan debate (Claude proposes, Codex reviews)
+- `srachka plan --task-file <path>` — run plan debate (Claude proposes, Codex reviews). Automatically creates a git worktree for isolation.
 - `srachka show-step --task-file <path>` — show the current step
 - `srachka next-step --task-file <path>` — advance to next step
 - `srachka review-diff --task-file <path>` — ask Codex to review the current diff
 - `srachka review-diff --stdin-diff` — review a diff piped via stdin
 - `srachka do-step --task-file <path>` — implement current step (Claude implements, Codex reviews, auto-fix loop)
+- `srachka merge --task-file <path>` — merge worktree branch back to base and clean up
 - `srachka doctor` — show auth diagnostics
 
 ---
@@ -84,23 +85,14 @@ srachka works only on clean repos — this makes `git add -A` safe after each st
 
 ---
 
-## Branch creation
+## Worktree isolation
 
-1. Determine the base branch — check which of `main`, `master`, `develop` exists:
-   ```bash
-   git fetch origin
-   for b in main master develop; do
-     if git show-ref --verify --quiet "refs/remotes/origin/$b"; then
-       BASE="$b"; break
-     fi
-   done
-   git checkout "$BASE" && git pull
-   ```
-2. Create a feature branch:
-   ```bash
-   git checkout -b <task-id>/<short-description>
-   ```
-3. Never work directly on the base branch.
+`srachka plan` automatically creates an isolated git worktree at `.srachka/worktrees/srachka/<run_id>` with a new branch. All implementation happens in the worktree — the user's working directory stays untouched.
+
+- **No manual branch creation needed** — srachka handles it.
+- The worktree path is printed after `srachka plan` completes.
+- `srachka do-step` automatically detects and switches to the worktree.
+- After all steps are done, use `srachka merge` to merge back and clean up.
 
 ---
 
@@ -143,15 +135,14 @@ Continue until all steps are complete.
 
 ## Final validation
 
-After all steps complete, run a final sanity check before creating a PR:
+After all steps complete, run a final diff review. The worktree branch was created from the base branch, so diff against it:
 
 ```bash
-for b in main master develop; do
-  if git show-ref --verify --quiet "refs/remotes/origin/$b"; then
-    BASE="$b"; break
-  fi
-done
-git diff "$BASE"...HEAD | srachka review-diff --task-file "$SELECTED_TASK" --stdin-diff
+srachka show-step --task-file "$SELECTED_TASK"
+# Should say "All steps complete"
+
+# Get the base branch from the task file metadata, then diff
+git diff main...HEAD | srachka review-diff --task-file "$SELECTED_TASK" --stdin-diff
 ```
 
 Codex checks: is the task fully implemented? Any regressions? Does it all fit together?
@@ -169,13 +160,23 @@ After validation passes:
 - If `confirm_pr` is true (mode 3) — show the PR title/description draft and wait for user confirmation before creating.
 - If `confirm_pr` is false (modes 1, 2) — create the PR without asking.
 
-1. Push the branch:
+1. Push the worktree branch:
    ```bash
    git push -u origin "$(git branch --show-current)"
    ```
 2. Look at existing PRs in the repo (`gh pr list`) to understand title/description format.
 3. Create PR via `gh pr create` following the same style.
 4. Include a summary of what was done and link to the task.
+
+## Merge & cleanup
+
+After PR is merged (or if working locally without PRs):
+
+```bash
+srachka merge --task-file "$SELECTED_TASK"
+```
+
+This merges the worktree branch back to the base branch and removes the worktree. If there are conflicts, the worktree is preserved and you get instructions to resolve them manually.
 
 ---
 
