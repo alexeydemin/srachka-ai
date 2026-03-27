@@ -98,9 +98,17 @@ class RunState:
     plan: PlanDraft
     final_plan_review: PlanReview
     review_history: list[dict[str, Any]] = field(default_factory=list)
+    worktree_path: str | None = None
+    worktree_branch: str | None = None
+    base_branch: str | None = None
+
+    @property
+    def active_work_root(self) -> str:
+        """Canonical work directory: worktree if present, else work_repo."""
+        return self.worktree_path or self.work_repo
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "task": self.task,
             "run_id": self.run_id,
             "work_repo": self.work_repo,
@@ -109,6 +117,13 @@ class RunState:
             "final_plan_review": self.final_plan_review.to_dict(),
             "review_history": self.review_history,
         }
+        if self.worktree_path is not None:
+            d["worktree_path"] = self.worktree_path
+        if self.worktree_branch is not None:
+            d["worktree_branch"] = self.worktree_branch
+        if self.base_branch is not None:
+            d["base_branch"] = self.base_branch
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RunState":
@@ -120,6 +135,9 @@ class RunState:
             plan=PlanDraft.from_dict(data["plan"]),
             final_plan_review=PlanReview.from_dict(data["final_plan_review"]),
             review_history=list(data.get("review_history", [])),
+            worktree_path=data.get("worktree_path"),
+            worktree_branch=data.get("worktree_branch"),
+            base_branch=data.get("base_branch"),
         )
 
     @property
