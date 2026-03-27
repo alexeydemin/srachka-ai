@@ -222,6 +222,17 @@ class TaskFileIntegrationTests(unittest.TestCase):
             meta=ProviderMeta(provider="Codex"),
         )
 
+    def _mock_worktree(self, tmp_path: Path):
+        """Context manager that mocks worktree functions to work in temp dirs."""
+        wt_dir = tmp_path / ".srachka" / "worktrees" / "test-branch"
+        wt_dir.mkdir(parents=True, exist_ok=True)
+        (wt_dir / ".git").write_text("gitdir: fake")
+        return (
+            mock.patch("srachka_ai.orchestrator.resolve_git_toplevel", return_value=tmp_path),
+            mock.patch("srachka_ai.orchestrator.get_current_branch", return_value="main"),
+            mock.patch("srachka_ai.orchestrator.create_worktree", return_value=wt_dir),
+        )
+
     def test_debate_plan_writes_to_task_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -229,11 +240,14 @@ class TaskFileIntegrationTests(unittest.TestCase):
             tf.write_text("# My Task\n\nDo something.\n")
 
             orch = self._make_orchestrator(tmp_path)
+            wt_mocks = self._mock_worktree(tmp_path)
 
-            with mock.patch.object(orch, "_ensure_clean_repo"):
-                with mock.patch.object(orch.claude, "ask_json", return_value=self._plan_result(["step A", "step B"])):
-                    with mock.patch.object(orch.codex, "ask_json", return_value=self._review_approved()):
-                        state = orch.debate_plan("# My Task\n\nDo something.\n", task_file_path=tf)
+            with mock.patch.object(orch, "_ensure_clean_repo"), \
+                 mock.patch.object(orch, "_switch_work_root"), \
+                 wt_mocks[0], wt_mocks[1], wt_mocks[2], \
+                 mock.patch.object(orch.claude, "ask_json", return_value=self._plan_result(["step A", "step B"])), \
+                 mock.patch.object(orch.codex, "ask_json", return_value=self._review_approved()):
+                state = orch.debate_plan("# My Task\n\nDo something.\n", task_file_path=tf)
 
             content = tf.read_text()
             from srachka_ai.task_file import SEPARATOR, read_task_plan, read_task_metadata
@@ -250,11 +264,14 @@ class TaskFileIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             orch = self._make_orchestrator(tmp_path)
+            wt_mocks = self._mock_worktree(tmp_path)
 
-            with mock.patch.object(orch, "_ensure_clean_repo"):
-                with mock.patch.object(orch.claude, "ask_json", return_value=self._plan_result(["s1"])):
-                    with mock.patch.object(orch.codex, "ask_json", return_value=self._review_approved()):
-                        state = orch.debate_plan("task text", task_file_path=None)
+            with mock.patch.object(orch, "_ensure_clean_repo"), \
+                 mock.patch.object(orch, "_switch_work_root"), \
+                 wt_mocks[0], wt_mocks[1], wt_mocks[2], \
+                 mock.patch.object(orch.claude, "ask_json", return_value=self._plan_result(["s1"])), \
+                 mock.patch.object(orch.codex, "ask_json", return_value=self._review_approved()):
+                state = orch.debate_plan("task text", task_file_path=None)
 
             self.assertEqual(state.plan.steps, ["s1"])
 

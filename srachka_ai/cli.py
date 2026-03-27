@@ -163,6 +163,12 @@ def _resolve_state_from_task_file(task_file_path: Path, runs_root: Path) -> tupl
         state.final_plan_review.status = plan_status
         if meta.work_repo:
             state.work_repo = meta.work_repo
+        if meta.worktree_path:
+            state.worktree_path = meta.worktree_path
+        if meta.worktree_branch:
+            state.worktree_branch = meta.worktree_branch
+        if meta.base_branch:
+            state.base_branch = meta.base_branch
     else:
         # Rebuild from task file — run dir missing or state.json corrupted
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -185,6 +191,9 @@ def _resolve_state_from_task_file(task_file_path: Path, runs_root: Path) -> tupl
                 requested_changes=[],
                 question_for_user=None,
             ),
+            worktree_path=meta.worktree_path,
+            worktree_branch=meta.worktree_branch,
+            base_branch=meta.base_branch,
         )
         save_run_state(run_dir, state, implementation_brief(state))
         from .state import point_latest
@@ -201,6 +210,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
     state = orchestrator.debate_plan(task, task_file_path=task_file_path)
     print(f"Run ID: {state.run_id}")
     print(f"Work repo: {state.work_repo}")
+    if state.worktree_path:
+        print(f"Worktree: {state.worktree_path}")
     print(f"Plan review status: {state.final_plan_review.status}")
     print(f"Current step: {state.current_step or 'None'}")
     return 0
@@ -268,13 +279,14 @@ def cmd_review_diff(args: argparse.Namespace) -> int:
         run_dir = resolve_latest_run_dir(runs_root)
         state = read_run_state(run_dir)
 
-    _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
+    active_root = Path(state.active_work_root)
+    _, orchestrator, _ = _build_orchestrator(active_root)
     orchestrator.attach_log(state.run_id)
 
     if args.stdin_diff:
         diff_text = sys.stdin.read().strip()
     else:
-        diff_text = _git_diff(Path(state.work_repo))
+        diff_text = _git_diff(active_root)
 
     if not diff_text:
         diff_text = "No changes detected."
@@ -297,7 +309,8 @@ def cmd_do_step(args: argparse.Namespace) -> int:
             run_dir = resolve_latest_run_dir(runs_root)
             state = read_run_state(run_dir)
 
-        _, orchestrator, _ = _build_orchestrator(Path(state.work_repo))
+        active_root = Path(state.active_work_root)
+        _, orchestrator, _ = _build_orchestrator(active_root)
         orchestrator.attach_log(state.run_id)
 
         if state.current_step is None:
@@ -331,6 +344,83 @@ def cmd_do_step(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    from .worktree import remove_worktree, resolve_git_toplevel
+
+    _, _, runs_root = _build_orchestrator()
+    work_repo = Path.cwd().resolve()
+
+    if getattr(args, "task_file", None):
+        task_file_path = _resolve_task_file(args.task_file, work_repo)
+        run_dir, state = _resolve_state_from_task_file(task_file_path, runs_root)
+    else:
+        run_dir = resolve_latest_run_dir(runs_root)
+        state = read_run_state(run_dir)
+
+    if not state.worktree_path or not state.worktree_branch or not state.base_branch:
+        raise CliError("This run has no worktree. Nothing to merge.")
+
+    wt_path = Path(state.worktree_path)
+    if not wt_path.is_dir():
+        raise CliError(f"Worktree not found at {wt_path}. It may have been manually removed.")
+
+    git_root = resolve_git_toplevel(Path(state.work_repo))
+
+    # Check base repo is clean
+    status_result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(git_root),
+        text=True,
+        capture_output=True,
+    )
+    if status_result.stdout.strip():
+        raise CliError(
+            f"Base repo has uncommitted changes at {git_root}.\n"
+            "Commit or stash them before merging."
+        )
+
+    # Checkout base branch
+    current = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=str(git_root), text=True, capture_output=True,
+    ).stdout.strip()
+    if current != state.base_branch:
+        checkout = subprocess.run(
+            ["git", "checkout", state.base_branch],
+            cwd=str(git_root), text=True, capture_output=True,
+        )
+        if checkout.returncode != 0:
+            raise CliError(f"Cannot checkout {state.base_branch}:\n{checkout.stderr.strip()}")
+
+    # Merge
+    merge_result = subprocess.run(
+        ["git", "merge", state.worktree_branch],
+        cwd=str(git_root), text=True, capture_output=True,
+    )
+    if merge_result.returncode != 0:
+        print(f"Merge failed (conflicts?):\n{merge_result.stdout}\n{merge_result.stderr}", file=sys.stderr)
+        print(f"Worktree preserved at: {wt_path}", file=sys.stderr)
+        print("Resolve conflicts, then run 'srachka merge' again.", file=sys.stderr)
+        return 2
+
+    # Cleanup worktree
+    remove_worktree(git_root, wt_path)
+    subprocess.run(
+        ["git", "branch", "-d", state.worktree_branch],
+        cwd=str(git_root), capture_output=True,
+    )
+
+    # Clear worktree fields in state
+    state.worktree_path = None
+    state.worktree_branch = None
+    state.base_branch = None
+    save_run_state(run_dir, state, implementation_brief(state))
+
+    print(f"Merged {state.run_id} into {current}")
+    print(f"Worktree removed: {wt_path}")
+    return 0
 
 
 def _decode_jwt_exp(token: str | None) -> str | None:
@@ -457,6 +547,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_do = sub.add_parser("do-step", help="Implement current step with Claude, review with Codex")
     p_do.add_argument("--task-file", help="Path to a markdown task file (source of truth)")
     p_do.set_defaults(func=cmd_do_step)
+
+    p_merge = sub.add_parser("merge", help="Merge worktree branch back and clean up")
+    p_merge.add_argument("--task-file", help="Path to a markdown task file (source of truth)")
+    p_merge.set_defaults(func=cmd_merge)
 
     p_init = sub.add_parser("init", help="Print the orchestrator prompt for Claude")
     p_init.set_defaults(func=cmd_init)
