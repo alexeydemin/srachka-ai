@@ -14,12 +14,13 @@
 | [x] | Split config | Separate `claude_command` (planning) and `claude_implement_command` (implementation with `--effort max`). | 2026-03-25 | 2026-03-25 |
 | [x] | Clean project layout | Runtime files moved to `.srachka/` (config, runs, logs, schemas, tasks). Task files gitignored — no more dirty repo from creating tasks. | 2026-03-25 | 2026-03-25 |
 | [x] | Unified task+plan file | Таск и план живут в одном .md файле — план дописывается после разделителя, прогресс через чекбоксы. `--task-file` во всех CLI командах. | 2026-03-25 | 2026-03-26 |
+| [x] | Worktree isolation | `srachka plan` автоматически создаёт git worktree — вся работа в изоляции. `srachka merge` мержит обратно и чистит. | 2026-03-25 | 2026-03-26 |
 
 ## Backlog
 
 | Status | Feature | Description | Task | Created |
 |--------|---------|-------------|------|---------|
-| [ ] | Worktree isolation | srachka автоматически создаёт git worktree при запуске — вся работа в изоляции, юзер может продолжать работать | [worktree-isolation.md](.srachka/tasks/worktree-isolation.md) | 2026-03-25 |
+| [x] | Worktree isolation | srachka автоматически создаёт git worktree при запуске — вся работа в изоляции, юзер может продолжать работать | [worktree-isolation.md](.srachka/tasks/worktree-isolation.md) | 2026-03-25 |
 | [x] | Unified task+plan file | Таск и план живут в одном .md файле — план дописывается после разделителя, прогресс через чекбоксы | [unified-task-plan-file.md](.srachka/tasks/unified-task-plan-file.md) | 2026-03-25 |
 | [x] | Fix commit messages | Auto-commit убирает дублирование `Step N: Step N:` — strip prefix перед форматированием. | | 2026-03-26 |
 | [x] | Srachka Autopilot | Интерактивный запуск: выбор задания из `.srachka/tasks/`, 3 режима автономности (Хуяч / Покажи план / Полный контроль), авто-коммиты всегда | [srachka-autopilot.md](.srachka/tasks/srachka-autopilot.md) | 2026-03-26 |
